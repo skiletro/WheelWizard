@@ -7,7 +7,11 @@ using System.Text.Json;
 namespace WheelWizard.Features.CloudSync;
 
 public sealed record CloudSaveMetadata(string Rev, DateTimeOffset ServerModified);
-public sealed record DropboxSyncLock(string DeviceId, DateTimeOffset StartedAt);
+public sealed record DropboxSyncLock(string DeviceId, DateTimeOffset StartedAt)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTimeOffset ServerModified { get; init; }
+}
 public sealed record DropboxSyncState(string DeviceId, DateTimeOffset SyncedAt, string ContentHash);
 
 public interface IDropboxSyncApi
@@ -103,8 +107,8 @@ public sealed class DropboxSyncApi : IDropboxSyncApi
         }
     }
 
-    public async Task<DropboxSyncLock?> ReadLockAsync(CancellationToken ct) => await ReadAdvisoryAsync<DropboxSyncLock>("/lock.json", ct).ConfigureAwait(false);
-    public async Task<DropboxSyncState?> ReadStateAsync(CancellationToken ct) => await ReadAdvisoryAsync<DropboxSyncState>("/state.json", ct).ConfigureAwait(false);
+    public Task<DropboxSyncLock?> ReadLockAsync(CancellationToken ct) => ReadLockAsyncCore(ct);
+    public Task<DropboxSyncState?> ReadStateAsync(CancellationToken ct) => ReadStateAsyncCore(ct);
 
     public async Task WriteLockAsync(DropboxSyncLock cloudLock, CancellationToken ct)
     {
@@ -132,23 +136,63 @@ public sealed class DropboxSyncApi : IDropboxSyncApi
         catch (Exception) { }
     }
 
-    private async Task<T?> ReadAdvisoryAsync<T>(string path, CancellationToken ct) where T : class
+    private async Task<DropboxSyncLock?> ReadLockAsyncCore(CancellationToken ct)
+    {
+        var (bytes, metadata) = await ReadAdvisoryBytesAsync("/lock.json", ct).ConfigureAwait(false);
+        if (bytes is null || metadata is null) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(bytes);
+            var root = document.RootElement;
+            var deviceId = GetProperty(root, "deviceId").GetString() ?? throw new JsonException();
+            var startedAt = DateTimeOffset.FromUnixTimeMilliseconds(GetProperty(root, "startedAt").GetInt64());
+            return new DropboxSyncLock(deviceId, startedAt) { ServerModified = metadata.ServerModified };
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException or ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<DropboxSyncState?> ReadStateAsyncCore(CancellationToken ct)
+    {
+        var (bytes, _) = await ReadAdvisoryBytesAsync("/state.json", ct).ConfigureAwait(false);
+        if (bytes is null) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(bytes);
+            var root = document.RootElement;
+            return new DropboxSyncState(GetProperty(root, "deviceId").GetString() ?? throw new JsonException(),
+                DateTimeOffset.FromUnixTimeMilliseconds(GetProperty(root, "syncedAt").GetInt64()),
+                GetProperty(root, "contentHash").GetString() ?? throw new JsonException());
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException or ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<(byte[]? Bytes, CloudSaveMetadata? Metadata)> ReadAdvisoryBytesAsync(string path, CancellationToken ct)
     {
         using var response = await SendAsync(() => JsonRequest(HttpMethod.Post, ApiRoot + "get_metadata", new { path }), ct).ConfigureAwait(false);
-        if (response.StatusCode == HttpStatusCode.Conflict && IsPathError(response, "not_found")) return null;
+        if (response.StatusCode == HttpStatusCode.Conflict && IsPathError(response, "not_found")) return (null, null);
         EnsureSuccess(response, $"Could not read Dropbox {path}.");
         var metadata = await ReadMetadataAsync(response.Content, ct).ConfigureAwait(false);
         var arg = JsonSerializer.Serialize(new { path, rev = metadata.Rev });
         using var download = await SendAsync(() => ContentRequest("download", arg), ct).ConfigureAwait(false);
         EnsureSuccess(download, $"Could not download Dropbox {path}.");
-        var bytes = await download.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-        try { return JsonSerializer.Deserialize<T>(bytes); }
-        catch (JsonException) { return null; }
+        return (await download.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false), metadata);
     }
 
     private async Task UploadJsonAsync<T>(string path, T value, CancellationToken ct)
     {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
+        object wireValue = value switch
+        {
+            DropboxSyncLock cloudLock => new { deviceId = cloudLock.DeviceId, startedAt = cloudLock.StartedAt.ToUnixTimeMilliseconds() },
+            DropboxSyncState state => new { deviceId = state.DeviceId, syncedAt = state.SyncedAt.ToUnixTimeMilliseconds(), contentHash = state.ContentHash },
+            _ => throw new InvalidOperationException("Unsupported Dropbox advisory JSON type."),
+        };
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(wireValue, JsonOptions);
         var arg = JsonSerializer.Serialize(new { path, mode = "overwrite", autorename = false, strict_conflict = true });
         using var response = await SendAsync(() => ContentRequest("upload", arg, () => new ByteArrayContent(bytes)), ct).ConfigureAwait(false);
         EnsureSuccess(response, $"Could not write Dropbox {path}.");
@@ -244,6 +288,13 @@ public sealed class DropboxSyncApi : IDropboxSyncApi
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+    private static JsonElement GetProperty(JsonElement element, string name)
+    {
+        foreach (var property in element.EnumerateObject())
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) return property.Value;
+        throw new JsonException($"Missing advisory field '{name}'.");
+    }
 
     private static object MakeMode(string? rev) => rev is null ? "add" : new Dictionary<string, string> { [".tag"] = "update", ["update"] = rev };
     private static object MakeCommit(object mode) => new { path = "/save.zip", mode, autorename = false, strict_conflict = true };

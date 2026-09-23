@@ -124,6 +124,42 @@ public class DropboxSyncApiTests
     }
 
     [Fact]
+    public async Task LockAndStateJsonUseWheelWitchNumericUnixMillisecondsAndReadCamelCase()
+    {
+        var syncedAt = DateTimeOffset.FromUnixTimeMilliseconds(1_798_128_000_123);
+        var lockStartedAt = DateTimeOffset.FromUnixTimeMilliseconds(1_798_128_000_456);
+        var writeHandler = new QueueHandler(Response(HttpStatusCode.OK, "{}"), Response(HttpStatusCode.OK, "{}"));
+        var writeApi = CreateApi(writeHandler);
+
+        await writeApi.WriteLockAsync(new DropboxSyncLock("device-1", lockStartedAt), CancellationToken.None);
+        await writeApi.WriteStateAsync(new DropboxSyncState("device-1", syncedAt, "hash"), CancellationToken.None);
+
+        using var lockJson = System.Text.Json.JsonDocument.Parse(writeHandler.Bodies[0]);
+        Assert.Equal("device-1", lockJson.RootElement.GetProperty("deviceId").GetString());
+        Assert.Equal(lockStartedAt.ToUnixTimeMilliseconds(), lockJson.RootElement.GetProperty("startedAt").GetInt64());
+        using var stateJson = System.Text.Json.JsonDocument.Parse(writeHandler.Bodies[1]);
+        Assert.Equal("device-1", stateJson.RootElement.GetProperty("deviceId").GetString());
+        Assert.Equal(syncedAt.ToUnixTimeMilliseconds(), stateJson.RootElement.GetProperty("syncedAt").GetInt64());
+        Assert.Equal("hash", stateJson.RootElement.GetProperty("contentHash").GetString());
+
+        var lockServerModified = DateTimeOffset.Parse("2026-12-01T00:01:51.789Z");
+        var readHandler = new QueueHandler(
+            Response(HttpStatusCode.OK, """{"rev":"lock-rev","server_modified":"2026-12-01T00:01:51.789Z"}"""),
+            AdvisoryDownload("""{"deviceId":"foreign-device","startedAt":1798128000456}""", """{"rev":"lock-rev","server_modified":"2026-12-01T00:01:51.789Z"}"""),
+            Response(HttpStatusCode.OK, """{"rev":"state-rev","server_modified":"2026-12-01T00:00:00Z"}"""),
+            AdvisoryDownload("""{"deviceId":"device-1","syncedAt":1798128000123,"contentHash":"hash"}""", """{"rev":"state-rev","server_modified":"2026-12-01T00:00:00Z"}"""));
+        var readApi = CreateApi(readHandler);
+
+        var cloudLock = await readApi.ReadLockAsync(CancellationToken.None);
+        var cloudState = await readApi.ReadStateAsync(CancellationToken.None);
+        Assert.NotNull(cloudLock);
+        Assert.Equal("foreign-device", cloudLock.DeviceId);
+        Assert.Equal(lockStartedAt, cloudLock.StartedAt);
+        Assert.Equal(lockServerModified, cloudLock.ServerModified);
+        Assert.Equal(new DropboxSyncState("device-1", syncedAt, "hash"), cloudState);
+    }
+
+    [Fact]
     public async Task StateAndLockJsonCorruptionIsAdvisory()
     {
         var handler = new QueueHandler(
@@ -146,6 +182,12 @@ public class DropboxSyncApiTests
         File.WriteAllText(path, contents);
         return path;
     }
+
+    private static HttpResponseMessage AdvisoryDownload(string body, string apiResult) => new(HttpStatusCode.OK)
+    {
+        Content = new ByteArrayContent(Encoding.UTF8.GetBytes(body)),
+        Headers = { { "Dropbox-API-Result", apiResult } },
+    };
 
     private static HttpResponseMessage CorruptDownload(string apiResult) => new(HttpStatusCode.OK)
     {

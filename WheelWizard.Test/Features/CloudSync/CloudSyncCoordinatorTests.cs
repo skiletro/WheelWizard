@@ -1,3 +1,4 @@
+using System.Net;
 using NSubstitute;
 using WheelWizard.Features.CloudSync;
 using WheelWizard.Settings;
@@ -177,6 +178,56 @@ public sealed class CloudSyncCoordinatorTests
             await api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
         }
         finally { if (File.Exists(snapshotFile)) File.Delete(snapshotFile); }
+    }
+
+    [Theory]
+    [InlineData("foreign", -60, true)]
+    [InlineData("foreign", -7201, false)]
+    [InlineData("device", -60, false)]
+    [InlineData("foreign", 60, true)]
+    public async Task Automatic_sync_defers_only_for_fresh_foreign_server_lock(string deviceId, int serverModifiedOffsetSeconds, bool deferred)
+    {
+        var fixture = CreateFixture(null, null);
+        var snapshot = Snapshot("local");
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(Task.FromResult<ArchiveSnapshot?>(snapshot));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(null));
+        var serverModified = DateTimeOffset.UtcNow.AddSeconds(serverModifiedOffsetSeconds);
+        fixture.Api.ReadLockAsync(Arg.Any<CancellationToken>()).Returns(new DropboxSyncLock(deviceId, serverModified)
+        {
+            ServerModified = serverModified,
+        });
+        fixture.Api.UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CloudSaveMetadata("r1", DateTimeOffset.UtcNow)));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.AutoSyncAsync(CancellationToken.None);
+
+        if (deferred)
+        {
+            Assert.Equal(SyncUiStatus.Idle, fixture.Coordinator.State.Status);
+            Assert.Contains("another device", fixture.Coordinator.State.Message);
+            await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        }
+        else
+        {
+            await fixture.Api.Received(1).UploadAsync(Arg.Any<string>(), Arg.Is<string?>(value => value == null), Arg.Any<CancellationToken>());
+        }
+        if (File.Exists(snapshot.FilePath)) File.Delete(snapshot.FilePath);
+    }
+
+    [Fact]
+    public async Task Advisory_lock_failure_reports_error_and_never_mistakes_it_for_missing_save()
+    {
+        var fixture = CreateFixture(null, null);
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(null));
+        fixture.Api.ReadLockAsync(Arg.Any<CancellationToken>()).Returns<Task<DropboxSyncLock?>>(_ => throw new DropboxAccessException("lock unavailable", HttpStatusCode.Forbidden));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.AutoSyncAsync(CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.Error, fixture.Coordinator.State.Status);
+        Assert.Contains("lock unavailable", fixture.Coordinator.State.Message);
+        await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

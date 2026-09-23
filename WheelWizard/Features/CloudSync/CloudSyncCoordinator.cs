@@ -311,6 +311,12 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         Publish(SyncUiStatus.Busy, "Checking cloud save.", _accountId, baseline.LastSync);
         await _restore.RecoverAsync(paths, ct).ConfigureAwait(false);
         var remote = await _dropbox.GetSaveMetadataAsync(ct).ConfigureAwait(false);
+        var cloudLock = await _dropbox.ReadLockAsync(ct).ConfigureAwait(false);
+        if (IsFreshForeignLock(cloudLock, baseline.DeviceId))
+        {
+            Publish(SyncUiStatus.Idle, "Sync deferred while another device holds a fresh Dropbox lock.", _accountId, baseline.LastSync);
+            return;
+        }
         var snapshot = await MakeSnapshotAsync(paths, ct).ConfigureAwait(false);
         var localHash = snapshot?.Hash;
         var action = SaveSyncEngine.Decide(remote?.Rev, baseline.Rev, localHash, baseline.LocalHash);
@@ -547,6 +553,12 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), comparison);
+    }
+
+    private static bool IsFreshForeignLock(DropboxSyncLock? cloudLock, string deviceId)
+    {
+        if (cloudLock is null || string.Equals(cloudLock.DeviceId, deviceId, StringComparison.Ordinal)) return false;
+        return DateTimeOffset.UtcNow - cloudLock.ServerModified <= TimeSpan.FromHours(2);
     }
 
     private static bool IsReconnectRequired(Exception exception) =>
