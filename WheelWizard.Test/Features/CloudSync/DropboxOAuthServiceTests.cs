@@ -100,6 +100,30 @@ public class DropboxOAuthServiceTests
     }
 
     [Fact]
+    public async Task DisconnectAsync_WaitsForRefreshBeforeDeletingStoredCredentials()
+    {
+        var store = new FakeTokenStore
+        {
+            Tokens = new OAuthTokens("expired", "refresh-old", DateTimeOffset.UtcNow.AddMinutes(-1)),
+        };
+        var handler = new BlockedRefreshHandler();
+        var service = new DropboxOAuthService(new HttpClient(handler), "client-key", store, new FakeCallbackHandler(), _ => { }, () => "dbid:account");
+
+        var refreshTask = service.GetAccessTokenAsync(CancellationToken.None);
+        await handler.RequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var disconnectTask = service.DisconnectAsync(CancellationToken.None);
+        await Task.Delay(75);
+        var disconnectWaitedForRefresh = !disconnectTask.IsCompleted;
+
+        handler.CompleteWith(JsonResponse("""{"access_token":"access-new","expires_in":14400}"""));
+        await refreshTask;
+        await disconnectTask;
+
+        Assert.True(disconnectWaitedForRefresh);
+        Assert.Null(store.Tokens);
+    }
+
+    [Fact]
     public async Task ConnectAsync_DoesNotSaveTokensWhenProtectedStorageUnavailable()
     {
         var store = new FakeTokenStore { SaveException = new UnauthorizedAccessException("keyring unavailable") };
@@ -181,6 +205,18 @@ public class DropboxOAuthServiceTests
         public Task StartAsync(CancellationToken ct) => Task.CompletedTask;
         public Task<Uri> WaitForCallbackAsync(CancellationToken ct) => Task.FromResult(new Uri($"http://localhost:47862/dropbox/?state={_state}&code=code"));
         public Task StopAsync() => Task.CompletedTask;
+    }
+
+    private sealed class BlockedRefreshHandler : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource<HttpResponseMessage> _response = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource RequestStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void CompleteWith(HttpResponseMessage response) => _response.TrySetResult(response);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestStarted.TrySetResult();
+            return await _response.Task.WaitAsync(cancellationToken);
+        }
     }
 
     private sealed class QueueHandler(params Func<HttpRequestMessage, HttpResponseMessage>[] responses) : HttpMessageHandler

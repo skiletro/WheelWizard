@@ -224,6 +224,19 @@ public sealed class DropboxOAuthService : IDropboxOAuthService
 
     public async Task<string> GetAccessTokenAsync(CancellationToken ct)
     {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await GetAccessTokenUnderGateAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<string> GetAccessTokenUnderGateAsync(CancellationToken ct)
+    {
         var accountId = _connectedAccountId ?? _accountId();
         if (string.IsNullOrWhiteSpace(accountId))
             throw new DropboxReconnectRequiredException("Reconnect Dropbox to continue.");
@@ -282,19 +295,27 @@ public sealed class DropboxOAuthService : IDropboxOAuthService
 
     public async Task DisconnectAsync(CancellationToken ct)
     {
-        var accountId = _connectedAccountId ?? _accountId();
-        if (string.IsNullOrWhiteSpace(accountId))
-            return;
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await _tokenStore.DeleteAsync(accountId, ct).ConfigureAwait(false);
+            var accountId = _connectedAccountId ?? _accountId();
+            if (string.IsNullOrWhiteSpace(accountId))
+                return;
+            try
+            {
+                await _tokenStore.DeleteAsync(accountId, ct).ConfigureAwait(false);
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                throw new SecureStorageUnavailableException("Protected credential storage is unavailable.", e);
+            }
+            _connectedAccountId = null;
+            _connectedEmail = null;
         }
-        catch (UnauthorizedAccessException e)
+        finally
         {
-            throw new SecureStorageUnavailableException("Protected credential storage is unavailable.", e);
+            _gate.Release();
         }
-        _connectedAccountId = null;
-        _connectedEmail = null;
     }
 
     private static async Task<OAuthTokens> ReadTokenResponseAsync(HttpResponseMessage response, string? oldRefreshToken, CancellationToken ct)
