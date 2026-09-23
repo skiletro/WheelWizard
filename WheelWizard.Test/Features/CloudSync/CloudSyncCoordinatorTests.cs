@@ -8,6 +8,115 @@ namespace WheelWizard.Test.Features.CloudSync;
 public sealed class CloudSyncCoordinatorTests
 {
     [Fact]
+    public async Task Restored_session_supports_manual_sync_after_restart_without_background_network_when_auto_disabled()
+    {
+        using var directory = new WheelSyncArchiveReaderTests.TemporaryDirectory();
+        var paths = new DolphinSavePaths(directory.Path, Path.Combine(directory.Path, "RetroWFC"), Path.Combine(directory.Path, "Wii"), "1");
+        var stateStore = new CloudSyncStateStore(() => directory.Path);
+        var persisted = stateStore.ReadFor("dbid:account", paths) with { Rev = "r1", LocalHash = "old" };
+        stateStore.Update(persisted);
+
+        var oauth = Substitute.For<IDropboxOAuthService>();
+        oauth.RestoreSessionAsync("dbid:account", Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
+        var source = Substitute.For<IDolphinSavePathSource>();
+        source.TryResolve().Returns(paths);
+        var api = Substitute.For<IDropboxSyncApi>();
+        api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r1", DateTimeOffset.UtcNow)));
+        var snapshotPath = Path.GetTempFileName();
+        var writer = Substitute.For<IWheelSyncArchiveWriter>();
+        writer.CreateAsync(paths, Arg.Any<CancellationToken>()).Returns(Task.FromResult<ArchiveSnapshot?>(new ArchiveSnapshot(snapshotPath, "old")));
+        var settings = Substitute.For<ISettingsManager>();
+        settings.Get<bool>(settings.CLOUD_AUTO_SYNC).Returns(false);
+        var coordinator = new CloudSyncCoordinator(oauth, api, source, stateStore, writer, Substitute.For<IWheelSyncArchiveReader>(),
+            Substitute.For<ISaveRestoreService>(), Substitute.For<ICloudSyncPrompt>(), settings);
+        try
+        {
+            await coordinator.RestoreSessionAsync(CancellationToken.None);
+            await coordinator.ReconcileSessionAsync(dolphinConfirmedRunning: false, CancellationToken.None);
+
+            Assert.Equal(SyncUiStatus.Idle, coordinator.State.Status);
+            await oauth.DidNotReceive().ConnectAsync(Arg.Any<CancellationToken>());
+            await api.DidNotReceive().GetSaveMetadataAsync(Arg.Any<CancellationToken>());
+            await coordinator.SyncNowAsync(CancellationToken.None);
+            await api.Received(1).GetSaveMetadataAsync(Arg.Any<CancellationToken>());
+        }
+        finally { if (File.Exists(snapshotPath)) File.Delete(snapshotPath); }
+    }
+
+    [Fact]
+    public async Task Restored_session_runs_startup_auto_sync_without_interactive_connect()
+    {
+        using var directory = new WheelSyncArchiveReaderTests.TemporaryDirectory();
+        var paths = new DolphinSavePaths(directory.Path, Path.Combine(directory.Path, "RetroWFC"), Path.Combine(directory.Path, "Wii"), "1");
+        var stateStore = new CloudSyncStateStore(() => directory.Path);
+        stateStore.Update(stateStore.ReadFor("dbid:account", paths) with { Rev = "r1", LocalHash = "same" });
+        var oauth = Substitute.For<IDropboxOAuthService>();
+        oauth.RestoreSessionAsync("dbid:account", Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
+        var source = Substitute.For<IDolphinSavePathSource>();
+        source.TryResolve().Returns(paths);
+        var api = Substitute.For<IDropboxSyncApi>();
+        api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r1", DateTimeOffset.UtcNow)));
+        var snapshotPath = Path.GetTempFileName();
+        var writer = Substitute.For<IWheelSyncArchiveWriter>();
+        writer.CreateAsync(paths, Arg.Any<CancellationToken>()).Returns(Task.FromResult<ArchiveSnapshot?>(new ArchiveSnapshot(snapshotPath, "same")));
+        var settings = Substitute.For<ISettingsManager>();
+        settings.Get<bool>(settings.CLOUD_AUTO_SYNC).Returns(true);
+        var coordinator = new CloudSyncCoordinator(oauth, api, source, stateStore, writer, Substitute.For<IWheelSyncArchiveReader>(),
+            Substitute.For<ISaveRestoreService>(), Substitute.For<ICloudSyncPrompt>(), settings);
+        try
+        {
+            await coordinator.RestoreSessionAsync(CancellationToken.None);
+            await coordinator.ReconcileSessionAsync(dolphinConfirmedRunning: false, CancellationToken.None);
+
+            Assert.Equal(SyncUiStatus.Idle, coordinator.State.Status);
+            await api.Received(1).GetSaveMetadataAsync(Arg.Any<CancellationToken>());
+            await oauth.DidNotReceive().ConnectAsync(Arg.Any<CancellationToken>());
+            await oauth.Received(1).RestoreSessionAsync("dbid:account", Arg.Any<CancellationToken>());
+        }
+        finally { if (File.Exists(snapshotPath)) File.Delete(snapshotPath); }
+    }
+
+    [Theory]
+    [InlineData(PersistedAccountStatus.Missing, "No saved Dropbox connection")]
+    [InlineData(PersistedAccountStatus.Corrupt, "state is corrupt")]
+    public async Task RestoreSession_FailsClosedWithoutTryingUnknownCredentials(PersistedAccountStatus status, string message)
+    {
+        var paths = new DolphinSavePaths("/dolphin", "/dolphin/save", "/dolphin/Wii", "1");
+        var source = Substitute.For<IDolphinSavePathSource>();
+        source.TryResolve().Returns(paths);
+        var stateStore = Substitute.For<ICloudSyncStateStore>();
+        stateStore.ReadPersistedAccount().Returns(new PersistedAccountRead(status));
+        var oauth = Substitute.For<IDropboxOAuthService>();
+        var settings = Substitute.For<ISettingsManager>();
+        settings.Get<bool>(settings.CLOUD_AUTO_SYNC).Returns(true);
+        var coordinator = new CloudSyncCoordinator(oauth, Substitute.For<IDropboxSyncApi>(), source, stateStore,
+            Substitute.For<IWheelSyncArchiveWriter>(), Substitute.For<IWheelSyncArchiveReader>(), Substitute.For<ISaveRestoreService>(),
+            Substitute.For<ICloudSyncPrompt>(), settings);
+
+        await coordinator.RestoreSessionAsync(CancellationToken.None);
+        await coordinator.AutoSyncAsync(CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.Disconnected, coordinator.State.Status);
+        Assert.Contains(message, coordinator.State.Message);
+        await oauth.DidNotReceive().RestoreSessionAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RestoreSession_MissingProtectedCredentialsDoesNotEstablishConnection()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        fixture.StateStore.ReadPersistedAccount().Returns(new PersistedAccountRead(PersistedAccountStatus.Valid, "account"));
+        fixture.Oauth.RestoreSessionAsync("account", Arg.Any<CancellationToken>()).Returns(Task.FromResult(false));
+
+        await fixture.Coordinator.RestoreSessionAsync(CancellationToken.None);
+        await fixture.Coordinator.AutoSyncAsync(CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.Disconnected, fixture.Coordinator.State.Status);
+        Assert.Contains("credentials are missing", fixture.Coordinator.State.Message);
+        await fixture.Api.DidNotReceive().GetSaveMetadataAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Both_changed_waits_for_choice_without_uploading()
     {
         var oauth = Substitute.For<IDropboxOAuthService>();

@@ -16,8 +16,12 @@ public sealed record SyncState(
     DateTimeOffset? LastSync
 );
 
+public enum PersistedAccountStatus { Missing, Valid, Corrupt }
+public sealed record PersistedAccountRead(PersistedAccountStatus Status, string? AccountId = null);
+
 public interface ICloudSyncStateStore
 {
+    PersistedAccountRead ReadPersistedAccount();
     SyncState ReadFor(string accountId, DolphinSavePaths paths);
     void Update(SyncState state);
     void ClearAccount();
@@ -35,6 +39,27 @@ public sealed class CloudSyncStateStore : ICloudSyncStateStore
     private readonly object _gate = new();
 
     public CloudSyncStateStore(Func<string>? appDataPath = null) => _appDataPath = appDataPath ?? (() => PathManager.WheelWizardAppdataPath);
+
+    public PersistedAccountRead ReadPersistedAccount()
+    {
+        lock (_gate)
+        {
+            var filePath = GetStateFilePath();
+            if (!File.Exists(filePath))
+                return new PersistedAccountRead(PersistedAccountStatus.Missing);
+            try
+            {
+                var state = JsonSerializer.Deserialize<SyncState>(File.ReadAllText(filePath));
+                return state is not null && !string.IsNullOrWhiteSpace(state.DeviceId)
+                    ? new PersistedAccountRead(PersistedAccountStatus.Valid, state.AccountId)
+                    : new PersistedAccountRead(PersistedAccountStatus.Corrupt);
+            }
+            catch (JsonException)
+            {
+                return new PersistedAccountRead(PersistedAccountStatus.Corrupt);
+            }
+        }
+    }
 
     public SyncState ReadFor(string accountId, DolphinSavePaths paths)
     {

@@ -62,6 +62,7 @@ internal sealed class UnconfiguredDropboxOAuthService : IDropboxOAuthService
 {
     private static InvalidOperationException Unconfigured() => new("Dropbox sync is not configured in this build. Configure the public Dropbox app key and rebuild.");
     public Task<(string AccountId, string Email)> ConnectAsync(CancellationToken ct) => Task.FromException<(string, string)>(Unconfigured());
+    public Task<bool> RestoreSessionAsync(string accountId, CancellationToken ct) => Task.FromResult(false);
     public Task<string> GetAccessTokenAsync(CancellationToken ct, bool forceRefresh = false) => Task.FromException<string>(Unconfigured());
     public Task DisconnectAsync(CancellationToken ct) => Task.CompletedTask;
 }

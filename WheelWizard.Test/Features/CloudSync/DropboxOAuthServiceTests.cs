@@ -67,6 +67,51 @@ public class DropboxOAuthServiceTests
     }
 
     [Fact]
+    public async Task RestoreSessionAsync_LoadsProtectedCredentialsWithoutBrowserOrNetwork()
+    {
+        var store = new FakeTokenStore { Tokens = new OAuthTokens("access", "refresh", DateTimeOffset.UtcNow.AddHours(1)) };
+        var handler = new QueueHandler();
+        var callback = new FakeCallbackHandler();
+        var browserOpened = false;
+        var service = CreateService(store, handler, callbackHandler: callback, browser: _ => browserOpened = true);
+
+        var restored = await service.RestoreSessionAsync("dbid:account", CancellationToken.None);
+        var token = await service.GetAccessTokenAsync(CancellationToken.None);
+
+        Assert.True(restored);
+        Assert.Equal("access", token);
+        Assert.False(browserOpened);
+        Assert.Empty(handler.Requests);
+        Assert.Equal("dbid:account", store.LastLoadedAccount);
+        Assert.False(callback.Started);
+    }
+
+    [Fact]
+    public async Task DisconnectAsync_PreventsProtectedCredentialsFromBeingRestored()
+    {
+        var store = new FakeTokenStore { Tokens = new OAuthTokens("access", "refresh", DateTimeOffset.UtcNow.AddHours(1)) };
+        var firstProcess = CreateService(store, new QueueHandler());
+        Assert.True(await firstProcess.RestoreSessionAsync("dbid:account", CancellationToken.None));
+        await firstProcess.DisconnectAsync(CancellationToken.None);
+
+        var restartedProcess = CreateService(store, new QueueHandler());
+        Assert.False(await restartedProcess.RestoreSessionAsync("dbid:account", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task RestoreSessionAsync_ReturnsFalseWhenProtectedCredentialsAreMissing()
+    {
+        var store = new FakeTokenStore();
+        var handler = new QueueHandler();
+        var service = CreateService(store, handler);
+
+        var restored = await service.RestoreSessionAsync("dbid:missing", CancellationToken.None);
+
+        Assert.False(restored);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task GetAccessTokenAsync_RetainsPreviousRefreshTokenWhenResponseOmitsIt()
     {
         var store = new FakeTokenStore
@@ -177,8 +222,13 @@ public class DropboxOAuthServiceTests
     {
         public OAuthTokens? Tokens { get; set; }
         public Exception? SaveException { get; set; }
+        public string? LastLoadedAccount { get; private set; }
 
-        public Task<OAuthTokens?> LoadAsync(string accountId, CancellationToken ct) => Task.FromResult(Tokens);
+        public Task<OAuthTokens?> LoadAsync(string accountId, CancellationToken ct)
+        {
+            LastLoadedAccount = accountId;
+            return Task.FromResult(Tokens);
+        }
         public Task SaveAsync(string accountId, OAuthTokens tokens, CancellationToken ct)
         {
             if (SaveException is not null)
@@ -217,8 +267,13 @@ public class DropboxOAuthServiceTests
     {
         private string _state = string.Empty;
         public Uri RedirectUri => new("http://localhost:47862/dropbox/");
+        public bool Started { get; private set; }
         public void SetState(string state) => _state = state;
-        public Task StartAsync(CancellationToken ct) => Task.CompletedTask;
+        public Task StartAsync(CancellationToken ct)
+        {
+            Started = true;
+            return Task.CompletedTask;
+        }
         public Task<Uri> WaitForCallbackAsync(CancellationToken ct) => Task.FromResult(new Uri($"http://localhost:47862/dropbox/?state={_state}&code=code"));
         public Task StopAsync() => Task.CompletedTask;
     }

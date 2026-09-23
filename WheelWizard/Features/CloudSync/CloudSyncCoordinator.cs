@@ -29,6 +29,7 @@ public interface ICloudSyncCoordinator
     SyncUiState State { get; }
     event EventHandler<SyncUiState>? StateChanged;
     Task ConnectAsync(CancellationToken ct);
+    Task RestoreSessionAsync(CancellationToken ct);
     Task AutoSyncAsync(CancellationToken ct);
     Task SyncNowAsync(CancellationToken ct);
     Task<LaunchSyncDecision> PrepareLaunchAsync(CancellationToken ct);
@@ -104,6 +105,54 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         {
             Publish(SyncUiStatus.Error, exception.Message);
             throw;
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task RestoreSessionAsync(CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            _accountId = null;
+            _email = null;
+            _baseline = null;
+            _resolvedPaths = _paths.TryResolve();
+            var persisted = _stateStore.ReadPersistedAccount();
+            if (persisted.Status == PersistedAccountStatus.Missing)
+            {
+                Publish(SyncUiStatus.Disconnected, "No saved Dropbox connection exists on this device.");
+                return;
+            }
+            if (persisted.Status == PersistedAccountStatus.Corrupt)
+            {
+                Publish(SyncUiStatus.Disconnected, "Saved Dropbox connection state is corrupt; reconnect to sync.");
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(persisted.AccountId))
+            {
+                Publish(SyncUiStatus.Disconnected, "Dropbox is disconnected.");
+                return;
+            }
+            if (_resolvedPaths is null)
+            {
+                Publish(SyncUiStatus.NotConfigured, "Configure a Dolphin user folder before syncing.", persisted.AccountId);
+                return;
+            }
+
+            var baseline = _stateStore.ReadFor(persisted.AccountId, _resolvedPaths);
+            if (!await _oauth.RestoreSessionAsync(persisted.AccountId, ct).ConfigureAwait(false))
+            {
+                Publish(SyncUiStatus.Disconnected, "Saved Dropbox credentials are missing; reconnect to sync.", persisted.AccountId);
+                return;
+            }
+            _accountId = persisted.AccountId;
+            _baseline = baseline;
+            Publish(SyncUiStatus.Idle, "Dropbox connection restored.", _accountId, baseline.LastSync);
+        }
+        catch (SecureStorageUnavailableException exception)
+        {
+            Publish(SyncUiStatus.Error, exception.Message);
         }
         finally { _gate.Release(); }
     }
@@ -231,7 +280,8 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
             if (!manual && !_settings.Get<bool>(_settings.CLOUD_AUTO_SYNC)) return;
             if (_accountId is null || _resolvedPaths is null || _baseline is null)
             {
-                Publish(SyncUiStatus.Disconnected, "Connect Dropbox to sync.");
+                if (State.Status is not (SyncUiStatus.Disconnected or SyncUiStatus.NotConfigured))
+                    Publish(SyncUiStatus.Disconnected, "Connect Dropbox to sync.");
                 return;
             }
             if (_sessionActive || _baseline.SessionPending)
@@ -433,7 +483,10 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
             {
                 _baseline = _baseline with { SessionPending = false };
                 _stateStore.Update(_baseline);
-                await _dropbox.DeleteLockAsync(ct).ConfigureAwait(false);
+                if (_accountId is not null && _settings.Get<bool>(_settings.CLOUD_AUTO_SYNC))
+                {
+                    try { await _dropbox.DeleteLockAsync(ct).ConfigureAwait(false); } catch { }
+                }
             }
             deferredChoice = _deferredChoice;
             _deferredChoice = null;

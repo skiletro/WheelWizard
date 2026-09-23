@@ -9,6 +9,7 @@ namespace WheelWizard.Features.CloudSync;
 public interface IDropboxOAuthService
 {
     Task<(string AccountId, string Email)> ConnectAsync(CancellationToken ct);
+    Task<bool> RestoreSessionAsync(string accountId, CancellationToken ct);
     Task<string> GetAccessTokenAsync(CancellationToken ct, bool forceRefresh = false);
     Task DisconnectAsync(CancellationToken ct);
 }
@@ -220,6 +221,34 @@ public sealed class DropboxOAuthService : IDropboxOAuthService
             throw new InvalidDataException("Dropbox account response omitted required identity.");
         _pending = null;
         return token;
+    }
+
+    public async Task<bool> RestoreSessionAsync(string accountId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accountId);
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            _connectedAccountId = null;
+            _connectedEmail = null;
+            OAuthTokens? tokens;
+            try
+            {
+                tokens = await _tokenStore.LoadAsync(accountId, ct).ConfigureAwait(false);
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                throw new SecureStorageUnavailableException("Protected credential storage is unavailable.", e);
+            }
+            if (tokens is null)
+                return false;
+            _connectedAccountId = accountId;
+            return true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     public async Task<string> GetAccessTokenAsync(CancellationToken ct, bool forceRefresh = false)

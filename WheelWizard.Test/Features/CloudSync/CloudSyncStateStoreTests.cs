@@ -5,6 +5,22 @@ namespace WheelWizard.Test.Features.CloudSync;
 public class CloudSyncStateStoreTests
 {
     [Fact]
+    public void ReadPersistedAccount_DistinguishesMissingValidAndCorruptState()
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new CloudSyncStateStore(() => directory.Path);
+
+        Assert.Equal(PersistedAccountStatus.Missing, store.ReadPersistedAccount().Status);
+
+        var paths = CreatePaths(directory.Path);
+        store.Update(store.ReadFor("dbid:account", paths));
+        Assert.Equal(new PersistedAccountRead(PersistedAccountStatus.Valid, "dbid:account"), store.ReadPersistedAccount());
+
+        File.WriteAllText(Path.Combine(directory.Path, CloudSyncStateStore.StateFileName), "{not-json");
+        Assert.Equal(PersistedAccountStatus.Corrupt, store.ReadPersistedAccount().Status);
+    }
+
+    [Fact]
     public void ReadFor_RetainsStateForSameAccountAndPathsAfterReopen()
     {
         using var directory = new TemporaryDirectory();

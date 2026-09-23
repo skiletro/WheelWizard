@@ -153,11 +153,13 @@ public class App : Application
             InitializeManagers();
 
             var settingsManager = Services.GetRequiredService<ISettingsManager>();
+            var cloudSync = Services.GetRequiredService<ICloudSyncCoordinator>();
+            await cloudSync.RestoreSessionAsync(CancellationToken.None);
             var paths = Services.GetRequiredService<IDolphinSavePathSource>().TryResolve();
             if (paths is not null)
             {
                 var dolphinRunning = Services.GetRequiredService<IDolphinSessionMonitor>().IsDolphinRunning(paths);
-                await Services.GetRequiredService<ICloudSyncCoordinator>().ReconcileSessionAsync(dolphinRunning, CancellationToken.None);
+                await cloudSync.ReconcileSessionAsync(dolphinRunning, CancellationToken.None);
             }
 
             var requestedByCli = GetStartupLaunchTarget() == StartupLaunchTarget.RetroRewind;

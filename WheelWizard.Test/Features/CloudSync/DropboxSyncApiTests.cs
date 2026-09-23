@@ -162,6 +162,7 @@ public class DropboxSyncApiTests
     private sealed class StaticTokenProvider : IDropboxOAuthService
     {
         public Task<(string AccountId, string Email)> ConnectAsync(CancellationToken ct) => throw new NotImplementedException();
+        public Task<bool> RestoreSessionAsync(string accountId, CancellationToken ct) => throw new NotImplementedException();
         public List<bool> ForceRefreshCalls { get; } = [];
         public Task<string> GetAccessTokenAsync(CancellationToken ct, bool forceRefresh = false)
         {
