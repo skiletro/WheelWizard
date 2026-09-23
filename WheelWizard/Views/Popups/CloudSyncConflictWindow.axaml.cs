@@ -32,7 +32,7 @@ public partial class CloudSyncConflictWindow : Window, ICloudSyncPrompt
         UseCloudButton.Content = _localization.Translate("action.cloud_sync_use_cloud");
         KeepLocalButton.Content = _localization.Translate("action.cloud_sync_keep_local");
         PlayWithoutSyncingButton.Content = _localization.Translate("action.cloud_sync_play_without_syncing");
-        Closed += (_, _) => _choice.TrySetResult(ConflictChoice.PlayWithoutSync);
+        Closed += (_, _) => _choice.TrySetResult(ConflictChoice.Cancel);
     }
 
     public async Task<ConflictChoice> ChooseAsync(SyncUiState state, CancellationToken ct)

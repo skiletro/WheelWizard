@@ -16,8 +16,8 @@ public enum SyncUiStatus
 }
 
 public sealed record SyncUiState(SyncUiStatus Status, string? Message = null, string? AccountId = null, DateTimeOffset? LastSync = null);
-public enum LaunchSyncDecision { Ready, NeedsChoice, ProceedWithoutSync }
-public enum ConflictChoice { UseCloud, KeepLocal, PlayWithoutSync }
+public enum LaunchSyncDecision { Ready, NeedsChoice, ProceedWithoutSync, Cancelled }
+public enum ConflictChoice { UseCloud, KeepLocal, PlayWithoutSync, Cancel }
 
 public interface ICloudSyncPrompt
 {
@@ -117,6 +117,8 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         if (State.Status is SyncUiStatus.Conflict or SyncUiStatus.CloudFound)
         {
             var choice = await _prompt.ChooseAsync(State, ct).ConfigureAwait(false);
+            if (choice == ConflictChoice.Cancel)
+                return LaunchSyncDecision.Cancelled;
             await ResolveAsync(choice, ct).ConfigureAwait(false);
             return choice == ConflictChoice.PlayWithoutSync ? LaunchSyncDecision.ProceedWithoutSync : LaunchSyncDecision.Ready;
         }
@@ -170,7 +172,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_pendingAction is null || _resolvedPaths is null || _accountId is null || _baseline is null)
+            if (choice == ConflictChoice.Cancel || _pendingAction is null || _resolvedPaths is null || _accountId is null || _baseline is null)
                 return;
             if (_sessionActive || _baseline.SessionPending)
             {

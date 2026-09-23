@@ -79,19 +79,35 @@ public sealed class CloudSyncSettingsViewModel : INotifyPropertyChanged, IDispos
     public async Task ConnectAsync(CancellationToken ct)
     {
         if (CanConnect)
-            await _coordinator.ConnectAsync(ct);
+            await RunCoordinatorActionAsync(() => _coordinator.ConnectAsync(ct));
     }
 
     public async Task DisconnectAsync(CancellationToken ct)
     {
         if (CanDisconnect)
-            await _coordinator.DisconnectAsync(ct);
+            await RunCoordinatorActionAsync(() => _coordinator.DisconnectAsync(ct));
     }
 
     public async Task SyncNowAsync(CancellationToken ct)
     {
         if (CanSync)
-            await _coordinator.SyncNowAsync(ct);
+            await RunCoordinatorActionAsync(() => _coordinator.SyncNowAsync(ct));
+    }
+
+    private async Task RunCoordinatorActionAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            UpdateState(new SyncUiState(SyncUiStatus.Error));
+        }
     }
 
     public void SetAutoSync(bool enabled)

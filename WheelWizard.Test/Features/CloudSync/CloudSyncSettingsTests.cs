@@ -109,6 +109,21 @@ public sealed class CloudSyncSettingsTests
     }
 
     [Fact]
+    public async Task Coordinator_failure_is_reported_as_error_state_without_escaping_ui_action()
+    {
+        var coordinator = Substitute.For<ICloudSyncCoordinator>();
+        coordinator.State.Returns(new SyncUiState(SyncUiStatus.Idle));
+        coordinator.SyncNowAsync(Arg.Any<CancellationToken>()).Returns<Task>(_ => throw new IOException("network failure"));
+        var settings = Substitute.For<ISettingsManager>();
+        var viewModel = CreateViewModel(coordinator, settings);
+
+        await viewModel.SyncNowAsync(CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.Error, viewModel.State.Status);
+        Assert.Equal("Cloud sync failed.", viewModel.StatusText);
+    }
+
+    [Fact]
     public void Cloud_sync_strings_fall_back_to_english_for_other_languages()
     {
         var localization = new EmbeddedYamlLocalizationService();

@@ -112,6 +112,23 @@ public sealed class CloudSyncCoordinatorTests
     }
 
     [Fact]
+    public async Task Dismissing_conflict_prompt_cancels_launch_without_resolving_conflict()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("new-local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow)));
+        fixture.Prompt.ChooseAsync(Arg.Any<SyncUiState>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(ConflictChoice.Cancel));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        var decision = await fixture.Coordinator.PrepareLaunchAsync(CancellationToken.None);
+
+        Assert.Equal(LaunchSyncDecision.Cancelled, decision);
+        Assert.Equal(SyncUiStatus.Conflict, fixture.Coordinator.State.Status);
+        await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        await fixture.Api.DidNotReceive().DownloadAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Account_change_rebinds_baseline_before_sync()
     {
         var fixture = CreateFixture("r1", "old-local");

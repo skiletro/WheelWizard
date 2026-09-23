@@ -59,7 +59,13 @@ public class RrLauncher : ILauncher
             if (syncDecision == LaunchSyncDecision.NeedsChoice)
             {
                 var choice = await _cloudSyncPrompt.ChooseAsync(_cloudSyncCoordinator.State, CancellationToken.None);
+                if (choice == ConflictChoice.Cancel)
+                    return new OperationError { Message = "Launch cancelled." };
                 await _cloudSyncCoordinator.ResolveAsync(choice, CancellationToken.None);
+            }
+            else if (syncDecision == LaunchSyncDecision.Cancelled)
+            {
+                return new OperationError { Message = "Launch cancelled." };
             }
             DolphinLaunchHelper.KillDolphin();
             if (WiiMoteSettings.IsForceSettingsEnabled())
