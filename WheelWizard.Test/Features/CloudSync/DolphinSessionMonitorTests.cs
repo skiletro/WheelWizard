@@ -39,6 +39,16 @@ public sealed class DolphinSessionMonitorTests
         Assert.True(monitor.IsDolphinRunning(paths));
     }
 
+    [Theory]
+    [InlineData("dolphin-emu -u /home/user/other-dolphin", "/home/user/wheelwizard-dolphin", false)]
+    [InlineData("dolphin-emu -u '/home/user/wheel wizard dolphin'", "/home/user/wheel wizard dolphin", true)]
+    [InlineData("dolphin-emu --user=/home/user/wheelwizard-dolphin", "/home/user/wheelwizard-dolphin", true)]
+    [InlineData("dolphin-emu", "/home/user/wheelwizard-dolphin", null)]
+    public void Process_user_argument_is_associated_with_resolved_user_folder(string commandLine, string userFolder, bool? expected)
+    {
+        Assert.Equal(expected, DolphinProcessUserPath.Match(commandLine, userFolder));
+    }
+
     private static Process StartExitedWrapper()
     {
         if (OperatingSystem.IsWindows())

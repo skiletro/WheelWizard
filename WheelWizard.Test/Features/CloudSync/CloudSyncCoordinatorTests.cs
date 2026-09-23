@@ -404,6 +404,53 @@ public sealed class CloudSyncCoordinatorTests
     }
 
     [Fact]
+    public async Task Prelaunch_play_without_sync_choice_allows_launch_without_restore_or_upload()
+    {
+        var fixture = CreateFixture(null, null);
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r1", DateTimeOffset.UtcNow)));
+        fixture.Prompt.ChooseAsync(Arg.Any<SyncUiState>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(ConflictChoice.PlayWithoutSync));
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+
+        var decision = await fixture.Coordinator.PrepareLaunchAsync(CancellationToken.None);
+
+        Assert.Equal(LaunchSyncDecision.ProceedWithoutSync, decision);
+        Assert.Equal(SyncUiStatus.Idle, fixture.Coordinator.State.Status);
+        await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        await fixture.Api.DidNotReceive().DownloadAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await fixture.Restore.DidNotReceive().RestoreAsync(Arg.Any<ValidatedArchive>(), Arg.Any<DolphinSavePaths>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Confirmed_game_exit_runs_exactly_one_post_exit_sync()
+    {
+        var fixture = CreateFixture("r1", "local");
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r1", DateTimeOffset.UtcNow)));
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.SessionStartedAsync(CancellationToken.None);
+
+        await fixture.Coordinator.SessionEndedAsync(CancellationToken.None);
+
+        await fixture.Api.Received(1).GetSaveMetadataAsync(Arg.Any<CancellationToken>());
+        Assert.Equal(SyncUiStatus.Idle, fixture.Coordinator.State.Status);
+    }
+
+    [Fact]
+    public async Task Focus_reconciliation_while_game_active_does_not_pull()
+    {
+        var fixture = CreateFixture("r1", "local");
+        fixture.StateStore.ReadFor("account", fixture.Paths).Returns(new SyncState("device", "account", fixture.Paths.UserFolder, fixture.Paths.SaveRoot, fixture.Paths.WiiRoot, "r1", "local", true, null));
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+
+        await fixture.Coordinator.ReconcileSessionAsync(dolphinConfirmedRunning: true, CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.QueuedForExit, fixture.Coordinator.State.Status);
+        await fixture.Api.DidNotReceive().GetSaveMetadataAsync(Arg.Any<CancellationToken>());
+        await fixture.Restore.DidNotReceive().RestoreAsync(Arg.Any<ValidatedArchive>(), Arg.Any<DolphinSavePaths>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Launch_failure_clears_pending_marker_without_post_exit_sync()
     {
         var fixture = CreateFixture("r1", "old-local");
@@ -469,12 +516,12 @@ public sealed class CloudSyncCoordinatorTests
         var restore = Substitute.For<ISaveRestoreService>();
         var prompt = Substitute.For<ICloudSyncPrompt>();
         var coordinator = new CloudSyncCoordinator(oauth, api, source, store, writer, reader, restore, prompt, settings);
-        return new CoordinatorFixture(paths, oauth, source, store, api, writer, reader, restore, coordinator);
+        return new CoordinatorFixture(paths, oauth, source, store, api, writer, reader, restore, prompt, coordinator);
     }
 
     private sealed record CoordinatorFixture(DolphinSavePaths Paths, IDropboxOAuthService Oauth, IDolphinSavePathSource Source,
         ICloudSyncStateStore StateStore, IDropboxSyncApi Api, IWheelSyncArchiveWriter Writer, IWheelSyncArchiveReader Reader,
-        ISaveRestoreService Restore, CloudSyncCoordinator Coordinator);
+        ISaveRestoreService Restore, ICloudSyncPrompt Prompt, CloudSyncCoordinator Coordinator);
 
     [Fact]
     public async Task Concurrent_sync_now_calls_are_serialized()

@@ -92,9 +92,11 @@ public sealed class SystemDolphinProcessProbe : IDolphinProcessProbe
                         && string.Equals(Path.GetFileNameWithoutExtension(executable), process.ProcessName, StringComparison.OrdinalIgnoreCase);
                     if (configuredExecutable || flatpakDolphin)
                     {
-                        // Command lines are not consistently available across platforms. A matching
-                        // Dolphin executable is conservatively treated as live if path ownership is
-                        // ambiguous; false positives defer sync, never restore into a running game.
+                        var userPathMatch = DolphinProcessUserPath.Match(ReadCommandLine(process.Id), paths.UserFolder);
+                        if (userPathMatch == false)
+                            continue;
+                        // Missing or inaccessible command lines leave ownership uncertain. Defer sync;
+                        // focus/startup reconciliation retries after the process exits.
                         return true;
                     }
                     if (launchedProcessIds.Contains(process.Id) && !process.HasExited)
@@ -102,9 +104,8 @@ public sealed class SystemDolphinProcessProbe : IDolphinProcessProbe
                 }
                 catch
                 {
-                    // Access denied or a transient process race cannot be treated as a confirmed exit.
-                    if (launchedProcessIds.Contains(process.Id))
-                        return true;
+                    // An uninspectable candidate cannot be treated as a confirmed exit.
+                    return true;
                 }
             }
         }
@@ -124,10 +125,65 @@ public sealed class SystemDolphinProcessProbe : IDolphinProcessProbe
         return false;
     }
 
+    private static string? ReadCommandLine(int processId)
+    {
+        try
+        {
+            if (OperatingSystem.IsLinux())
+            {
+                var commandLinePath = $"/proc/{processId}/cmdline";
+                return File.Exists(commandLinePath) ? File.ReadAllText(commandLinePath).Replace('\0', ' ') : null;
+            }
+            if (OperatingSystem.IsMacOS())
+            {
+                using var process = Process.Start(new ProcessStartInfo("ps")
+                {
+                    ArgumentList = { "-o", "args=", "-p", processId.ToString() },
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                });
+                if (process is null)
+                    return null;
+                var commandLine = process.StandardOutput.ReadToEnd();
+                return process.WaitForExit(1000) && process.ExitCode == 0 ? commandLine : null;
+            }
+        }
+        catch { }
+        return null;
+    }
+
     private static bool SamePath(string left, string right)
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         try { return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), comparison); }
         catch { return false; }
+    }
+}
+
+public static class DolphinProcessUserPath
+{
+    private static readonly System.Text.RegularExpressions.Regex UserArgument = new(
+        "(?:^|\\s)(?:-u|--user)(?:=|\\s+)(?:\\\"([^\\\"]*)\\\"|'([^']*)'|([^\\s]+))",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant
+    );
+
+    /// <summary>Returns null when process arguments cannot prove which Dolphin user folder is active.</summary>
+    public static bool? Match(string? commandLine, string resolvedUserFolder)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+            return null;
+        var match = UserArgument.Match(commandLine);
+        if (!match.Success)
+            return null;
+        var argument = match.Groups[1].Success ? match.Groups[1].Value
+            : match.Groups[2].Success ? match.Groups[2].Value
+            : match.Groups[3].Value;
+        try
+        {
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return string.Equals(Path.GetFullPath(argument), Path.GetFullPath(resolvedUserFolder), comparison);
+        }
+        catch { return null; }
     }
 }
