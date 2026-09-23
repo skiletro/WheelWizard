@@ -59,6 +59,8 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
     private string? _pendingRev;
     private SyncAction? _pendingAction;
     private bool _sessionActive;
+    private bool _manualSyncQueued;
+    private ConflictChoice? _deferredChoice;
 
     public CloudSyncCoordinator(IDropboxOAuthService oauth, IDropboxSyncApi dropbox, IDolphinSavePathSource paths,
         ICloudSyncStateStore stateStore, IWheelSyncArchiveWriter writer, IWheelSyncArchiveReader reader,
@@ -148,6 +150,12 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         {
             if (_pendingAction is null || _resolvedPaths is null || _accountId is null || _baseline is null)
                 return;
+            if (_sessionActive || _baseline.SessionPending)
+            {
+                _deferredChoice = choice;
+                Publish(SyncUiStatus.QueuedForExit, "Conflict choice queued until Dolphin exits.", _accountId, _baseline.LastSync);
+                return;
+            }
             if (choice == ConflictChoice.PlayWithoutSync)
             {
                 _pendingAction = null;
@@ -204,6 +212,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
             }
             if (_sessionActive || _baseline.SessionPending)
             {
+                if (manual) _manualSyncQueued = true;
                 Publish(SyncUiStatus.QueuedForExit, "Sync queued until Dolphin exits.", _accountId, _baseline.LastSync);
                 return;
             }
@@ -274,8 +283,15 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
                 }
             }
             finally { DeleteSnapshot(current); }
-            var metadata = await _dropbox.UploadAsync(snapshot.FilePath, expectedRev, ct).ConfigureAwait(false);
-            await CommitSuccessAsync(metadata.Rev, snapshot.Hash, ct).ConfigureAwait(false);
+            try
+            {
+                var metadata = await _dropbox.UploadAsync(snapshot.FilePath, expectedRev, ct).ConfigureAwait(false);
+                await CommitSuccessAsync(metadata.Rev, snapshot.Hash, ct).ConfigureAwait(false);
+            }
+            catch (DropboxConflictException)
+            {
+                await RecheckAfterUploadConflictAsync(ct).ConfigureAwait(false);
+            }
         }
         finally { DeleteSnapshot(snapshot); }
     }
@@ -311,8 +327,36 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         Publish(SyncUiStatus.Idle, null, _accountId, syncedAt);
     }
 
+    private async Task RecheckAfterUploadConflictAsync(CancellationToken ct)
+    {
+        var remote = await _dropbox.GetSaveMetadataAsync(ct).ConfigureAwait(false);
+        if (remote is null)
+        {
+            Publish(SyncUiStatus.Error, "Dropbox save changed during upload and is now missing.", _accountId, _baseline?.LastSync);
+            return;
+        }
+
+        var local = await MakeSnapshotAsync(_resolvedPaths!, ct).ConfigureAwait(false);
+        if (local is null)
+        {
+            Publish(SyncUiStatus.Error, "Local save archive is empty after upload conflict.", _accountId, _baseline?.LastSync);
+            return;
+        }
+        try
+        {
+            var action = SaveSyncEngine.Decide(remote.Rev, _baseline!.Rev, local.Hash, _baseline.LocalHash);
+            _pendingRev = remote.Rev;
+            _pendingAction = action is SyncAction.FreshDevice ? SyncAction.FreshDevice : SyncAction.Conflict;
+            var status = _pendingAction == SyncAction.FreshDevice ? SyncUiStatus.CloudFound : SyncUiStatus.Conflict;
+            Publish(status, "Dropbox save changed during upload; choose how to resolve it.", _accountId, _baseline.LastSync);
+        }
+        finally { DeleteSnapshot(local); }
+    }
+
     private async Task EndSessionAsync(bool syncAfter, CancellationToken ct)
     {
+        ConflictChoice? deferredChoice;
+        bool manualSyncQueued;
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -323,9 +367,16 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
                 _stateStore.Update(_baseline);
                 await _dropbox.DeleteLockAsync(ct).ConfigureAwait(false);
             }
+            deferredChoice = _deferredChoice;
+            _deferredChoice = null;
+            manualSyncQueued = _manualSyncQueued;
+            _manualSyncQueued = false;
         }
         finally { _gate.Release(); }
-        if (syncAfter) await AutoSyncAsync(ct).ConfigureAwait(false);
+
+        if (deferredChoice is { } choice) await ResolveAsync(choice, ct).ConfigureAwait(false);
+        if (manualSyncQueued) await SyncNowAsync(ct).ConfigureAwait(false);
+        else if (syncAfter) await AutoSyncAsync(ct).ConfigureAwait(false);
     }
 
     private void Publish(SyncUiStatus status, string? message = null, string? account = null, DateTimeOffset? lastSync = null)
