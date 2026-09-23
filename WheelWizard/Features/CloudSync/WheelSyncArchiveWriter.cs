@@ -18,13 +18,19 @@ public sealed class WheelSyncArchiveWriter : IWheelSyncArchiveWriter
     private const string PulsarRoot = "shared2/Pulsar/RetroRewind6";
     private readonly ArchiveSafetyLimits _limits;
     private readonly Func<string, Stream> _sourceOpener;
+    private readonly string? _temporaryOutputDirectory;
 
-    public WheelSyncArchiveWriter(ArchiveSafetyLimits? limits = null, Func<string, Stream>? sourceOpener = null)
+    public WheelSyncArchiveWriter(
+        ArchiveSafetyLimits? limits = null,
+        Func<string, Stream>? sourceOpener = null,
+        string? temporaryOutputDirectory = null
+    )
     {
         _limits = limits ?? new ArchiveSafetyLimits();
         if (_limits.MaximumEntries < 1 || _limits.MaximumEntryBytes < 0 || _limits.MaximumTotalBytes < 0)
             throw new ArgumentOutOfRangeException(nameof(limits));
         _sourceOpener = sourceOpener ?? (path => new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true));
+        _temporaryOutputDirectory = temporaryOutputDirectory;
     }
 
     public async Task<ArchiveSnapshot?> CreateAsync(DolphinSavePaths paths, CancellationToken ct)
@@ -72,7 +78,7 @@ public sealed class WheelSyncArchiveWriter : IWheelSyncArchiveWriter
         if (included.Count + 1 > _limits.MaximumEntries)
             throw new InvalidDataException("Save archive has too many entries");
 
-        var directory = Path.Combine(PathManager.WheelWizardAppdataPath, "cloud-sync", "tmp");
+        var directory = _temporaryOutputDirectory ?? Path.Combine(PathManager.WheelWizardAppdataPath, "cloud-sync", "tmp");
         Directory.CreateDirectory(directory);
         var filePath = Path.Combine(directory, $"{Guid.NewGuid():N}.zip");
 

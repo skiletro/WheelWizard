@@ -88,14 +88,16 @@ public class WheelSyncArchiveWriterTests
         using var root = new TemporaryDirectory();
         var wii = Path.Combine(root.Path, "Wii");
         AddFile(wii, "shared2/Pulsar/RetroRewind6/Ghosts/large.ghost", new byte[5]);
-        var tempDirectory = Path.Combine(WheelWizard.Services.PathManager.WheelWizardAppdataPath, "cloud-sync", "tmp");
-        var before = Directory.Exists(tempDirectory) ? Directory.GetFiles(tempDirectory).ToHashSet() : [];
-        var writer = new WheelSyncArchiveWriter(new ArchiveSafetyLimits(MaximumEntries: 10, MaximumEntryBytes: 4, MaximumTotalBytes: 1000));
+        var tempDirectory = Path.Combine(root.Path, "writer-temp");
+        var writer = new WheelSyncArchiveWriter(
+            new ArchiveSafetyLimits(MaximumEntries: 10, MaximumEntryBytes: 4, MaximumTotalBytes: 1000),
+            temporaryOutputDirectory: tempDirectory
+        );
 
         await Assert.ThrowsAsync<InvalidDataException>(() => writer.CreateAsync(
             new DolphinSavePaths(root.Path, Path.Combine(root.Path, "save"), wii, null), CancellationToken.None));
 
-        AssertNoNewTemporaryArchives(tempDirectory, before);
+        AssertTemporaryArchiveDirectoryIsEmpty(tempDirectory);
     }
 
     [Fact]
@@ -120,27 +122,28 @@ public class WheelSyncArchiveWriterTests
         var wii = Path.Combine(root.Path, "Wii");
         var ghost = Path.Combine(wii, "shared2/Pulsar/RetroRewind6/Ghosts/changed.ghost");
         AddFile(wii, "shared2/Pulsar/RetroRewind6/Ghosts/changed.ghost", [1]);
+        var tempDirectory = Path.Combine(root.Path, "writer-temp");
         var writer = new WheelSyncArchiveWriter(
             new ArchiveSafetyLimits(MaximumEntries: 10, MaximumEntryBytes: 4, MaximumTotalBytes: 1000),
             sourceOpener: path =>
             {
                 File.WriteAllBytes(path, new byte[5]);
                 return File.OpenRead(path);
-            });
-        var tempDirectory = Path.Combine(WheelWizard.Services.PathManager.WheelWizardAppdataPath, "cloud-sync", "tmp");
-        var before = Directory.Exists(tempDirectory) ? Directory.GetFiles(tempDirectory).ToHashSet() : [];
+            },
+            temporaryOutputDirectory: tempDirectory
+        );
 
         await Assert.ThrowsAsync<InvalidDataException>(() => writer.CreateAsync(
             new DolphinSavePaths(root.Path, Path.Combine(root.Path, "save"), wii, null), CancellationToken.None));
 
-        AssertNoNewTemporaryArchives(tempDirectory, before);
+        AssertTemporaryArchiveDirectoryIsEmpty(tempDirectory);
         Assert.True(File.Exists(ghost));
     }
 
-    private static void AssertNoNewTemporaryArchives(string directory, HashSet<string> before)
+    private static void AssertTemporaryArchiveDirectoryIsEmpty(string directory)
     {
-        var after = Directory.Exists(directory) ? Directory.GetFiles(directory).ToHashSet() : [];
-        Assert.Equal(before, after);
+        Assert.True(Directory.Exists(directory));
+        Assert.Empty(Directory.GetFiles(directory));
     }
 
     private static void AddFile(string root, string relative, byte[] bytes)
