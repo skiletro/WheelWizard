@@ -88,6 +88,22 @@ public class DropboxOAuthServiceTests
     }
 
     [Fact]
+    public async Task GetAccessTokenAsync_ForceRefreshesAnUnexpiredRejectedToken()
+    {
+        var store = new FakeTokenStore
+        {
+            Tokens = new OAuthTokens("rejected", "refresh-token", DateTimeOffset.UtcNow.AddHours(4)),
+        };
+        var handler = new QueueHandler(_ => JsonResponse("""{"access_token":"refreshed","expires_in":14400}"""));
+        var service = CreateService(store, handler, () => "dbid:account");
+
+        Assert.Equal("refreshed", await service.GetAccessTokenAsync(CancellationToken.None, forceRefresh: true));
+        Assert.Equal("refreshed", store.Tokens!.AccessToken);
+        Assert.Single(handler.Requests);
+        Assert.Contains("grant_type=refresh_token", await handler.Requests[0].Content!.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task GetAccessTokenAsync_ReportsReconnectAfterRefreshFailure()
     {
         var store = new FakeTokenStore

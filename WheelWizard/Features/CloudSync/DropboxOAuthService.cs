@@ -9,7 +9,7 @@ namespace WheelWizard.Features.CloudSync;
 public interface IDropboxOAuthService
 {
     Task<(string AccountId, string Email)> ConnectAsync(CancellationToken ct);
-    Task<string> GetAccessTokenAsync(CancellationToken ct);
+    Task<string> GetAccessTokenAsync(CancellationToken ct, bool forceRefresh = false);
     Task DisconnectAsync(CancellationToken ct);
 }
 
@@ -222,12 +222,12 @@ public sealed class DropboxOAuthService : IDropboxOAuthService
         return token;
     }
 
-    public async Task<string> GetAccessTokenAsync(CancellationToken ct)
+    public async Task<string> GetAccessTokenAsync(CancellationToken ct, bool forceRefresh = false)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            return await GetAccessTokenUnderGateAsync(ct).ConfigureAwait(false);
+            return await GetAccessTokenUnderGateAsync(ct, forceRefresh).ConfigureAwait(false);
         }
         finally
         {
@@ -235,7 +235,7 @@ public sealed class DropboxOAuthService : IDropboxOAuthService
         }
     }
 
-    private async Task<string> GetAccessTokenUnderGateAsync(CancellationToken ct)
+    private async Task<string> GetAccessTokenUnderGateAsync(CancellationToken ct, bool forceRefresh)
     {
         var accountId = _connectedAccountId ?? _accountId();
         if (string.IsNullOrWhiteSpace(accountId))
@@ -251,7 +251,7 @@ public sealed class DropboxOAuthService : IDropboxOAuthService
         }
         if (tokens is null)
             throw new DropboxReconnectRequiredException("Reconnect Dropbox to continue.");
-        if (tokens.ExpiresAt > DateTimeOffset.UtcNow.AddMinutes(1))
+        if (!forceRefresh && tokens.ExpiresAt > DateTimeOffset.UtcNow.AddMinutes(1))
             return tokens.AccessToken;
 
         try
