@@ -250,7 +250,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            Publish(exception is DropboxAccessException { StatusCode: System.Net.HttpStatusCode.Unauthorized } ? SyncUiStatus.ReconnectNeeded : SyncUiStatus.Error, exception.Message, _accountId, _baseline?.LastSync);
+            Publish(IsReconnectRequired(exception) ? SyncUiStatus.ReconnectNeeded : SyncUiStatus.Error, exception.Message, _accountId, _baseline?.LastSync);
             throw;
         }
         finally { _gate.Release(); }
@@ -297,7 +297,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            Publish(exception is DropboxAccessException { StatusCode: System.Net.HttpStatusCode.Unauthorized } ? SyncUiStatus.ReconnectNeeded : SyncUiStatus.Error, exception.Message, _accountId, _baseline?.LastSync);
+            Publish(IsReconnectRequired(exception) ? SyncUiStatus.ReconnectNeeded : SyncUiStatus.Error, exception.Message, _accountId, _baseline?.LastSync);
             if (manual) throw;
         }
         finally { _gate.Release(); }
@@ -548,6 +548,10 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), comparison);
     }
+
+    private static bool IsReconnectRequired(Exception exception) =>
+        exception is DropboxReconnectRequiredException
+        or DropboxAccessException { StatusCode: System.Net.HttpStatusCode.Unauthorized };
 
     private void Publish(SyncUiStatus status, string? message = null, string? account = null, DateTimeOffset? lastSync = null)
     {

@@ -11,6 +11,7 @@ namespace WheelWizard.Views.Pages.Settings;
 public partial class CloudSyncSettings : UserControlBase
 {
     [Inject] private ICloudSyncCoordinator Coordinator { get; set; } = null!;
+    [Inject] private ICloudSyncPrompt Prompt { get; set; } = null!;
     [Inject] private IDolphinSavePathSource Paths { get; set; } = null!;
     [Inject] private ISettingsManager Settings { get; set; } = null!;
     [Inject] private ILocalizationService Localization { get; set; } = null!;
@@ -33,7 +34,8 @@ public partial class CloudSyncSettings : UserControlBase
             Localization,
             Settings.DolphinPathsSetupCorrectly() && Paths.TryResolve() is not null,
             OperatingSystem.IsWindows() || OperatingSystem.IsMacOS(),
-            !string.IsNullOrWhiteSpace(CloudSyncBuildConfiguration.AppKey));
+            !string.IsNullOrWhiteSpace(CloudSyncBuildConfiguration.AppKey),
+            Prompt);
         DataContext = _viewModel;
     }
 

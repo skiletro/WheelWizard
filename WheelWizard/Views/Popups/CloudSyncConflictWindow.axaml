@@ -12,5 +12,6 @@
         <Button x:Name="UseCloudButton" Click="UseCloud_Click" />
         <Button x:Name="KeepLocalButton" Click="KeepLocal_Click" />
         <Button x:Name="PlayWithoutSyncingButton" Click="PlayWithoutSyncing_Click" />
+        <Button x:Name="CancelButton" Click="Cancel_Click" />
     </StackPanel>
 </Window>

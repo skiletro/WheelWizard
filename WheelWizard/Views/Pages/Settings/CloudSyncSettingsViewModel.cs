@@ -35,6 +35,7 @@ public sealed class CloudSyncSettingsViewModel : INotifyPropertyChanged, IDispos
     ];
 
     private readonly ICloudSyncCoordinator _coordinator;
+    private readonly ICloudSyncPrompt? _prompt;
     private readonly ISettingsManager _settings;
     private readonly ILocalizationService _localization;
     private readonly bool _hasDolphinPaths;
@@ -43,9 +44,11 @@ public sealed class CloudSyncSettingsViewModel : INotifyPropertyChanged, IDispos
     private SyncUiState _state;
 
     public CloudSyncSettingsViewModel(ICloudSyncCoordinator coordinator, ISettingsManager settings,
-        ILocalizationService localization, bool hasDolphinPaths, bool secureStorageAvailable, bool hasAppKey = true)
+        ILocalizationService localization, bool hasDolphinPaths, bool secureStorageAvailable, bool hasAppKey = true,
+        ICloudSyncPrompt? prompt = null)
     {
         _coordinator = coordinator;
+        _prompt = prompt;
         _settings = settings;
         _localization = localization;
         _hasDolphinPaths = hasDolphinPaths;
@@ -90,12 +93,26 @@ public sealed class CloudSyncSettingsViewModel : INotifyPropertyChanged, IDispos
 
     public async Task SyncNowAsync(CancellationToken ct)
     {
-        if (CanSync)
-            await RunCoordinatorActionAsync(() => _coordinator.SyncNowAsync(ct));
+        if (!CanSync)
+            return;
+
+        await RunCoordinatorActionAsync(() => _coordinator.SyncNowAsync(ct));
+        var state = _coordinator.State;
+        if (state.Status is not (SyncUiStatus.Conflict or SyncUiStatus.CloudFound))
+            return;
+
+        UpdateState(state);
+        if (_prompt is null)
+            return;
+
+        var choice = await _prompt.ChooseAsync(state, ct);
+        if (choice != ConflictChoice.Cancel)
+            await RunCoordinatorActionAsync(() => _coordinator.ResolveAsync(choice, ct));
     }
 
     private async Task RunCoordinatorActionAsync(Func<Task> action)
     {
+        var previousState = _coordinator.State;
         try
         {
             await action();
@@ -104,9 +121,21 @@ public sealed class CloudSyncSettingsViewModel : INotifyPropertyChanged, IDispos
         {
             throw;
         }
+        catch (DropboxReconnectRequiredException)
+        {
+            var published = _coordinator.State;
+            if (published.Status != previousState.Status || published.Message != previousState.Message)
+                UpdateState(published);
+            else
+                UpdateState(new SyncUiState(SyncUiStatus.ReconnectNeeded, null, _state.AccountId, _state.LastSync));
+        }
         catch
         {
-            UpdateState(new SyncUiState(SyncUiStatus.Error));
+            var published = _coordinator.State;
+            if (published.Status != previousState.Status || published.Message != previousState.Message)
+                UpdateState(published);
+            else
+                UpdateState(new SyncUiState(SyncUiStatus.Error, null, _state.AccountId, _state.LastSync));
         }
     }
 

@@ -32,6 +32,7 @@ public partial class CloudSyncConflictWindow : Window, ICloudSyncPrompt
         UseCloudButton.Content = _localization.Translate("action.cloud_sync_use_cloud");
         KeepLocalButton.Content = _localization.Translate("action.cloud_sync_keep_local");
         PlayWithoutSyncingButton.Content = _localization.Translate("action.cloud_sync_play_without_syncing");
+        CancelButton.Content = _localization.Translate("action.cancel");
         Closed += (_, _) => _choice.TrySetResult(ConflictChoice.Cancel);
     }
 
@@ -54,6 +55,7 @@ public partial class CloudSyncConflictWindow : Window, ICloudSyncPrompt
     private void UseCloud_Click(object? sender, RoutedEventArgs e) => Finish(ConflictChoice.UseCloud);
     private void KeepLocal_Click(object? sender, RoutedEventArgs e) => Finish(ConflictChoice.KeepLocal);
     private void PlayWithoutSyncing_Click(object? sender, RoutedEventArgs e) => Finish(ConflictChoice.PlayWithoutSync);
+    private void Cancel_Click(object? sender, RoutedEventArgs e) => Finish(ConflictChoice.Cancel);
 
     private void Finish(ConflictChoice choice)
     {

@@ -621,6 +621,20 @@ public sealed class CloudSyncCoordinatorTests
         Assert.Equal(SyncUiStatus.Idle, fixture.Coordinator.State.Status);
     }
 
+    [Fact]
+    public async Task Rejected_refresh_publishes_reconnect_needed_for_manual_sync()
+    {
+        var fixture = CreateFixture("r1", "same");
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>())
+            .Returns<Task<CloudSaveMetadata?>>(_ => throw new DropboxReconnectRequiredException("Dropbox refresh token rejected; reconnect."));
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+
+        await Assert.ThrowsAsync<DropboxReconnectRequiredException>(() => fixture.Coordinator.SyncNowAsync(CancellationToken.None));
+
+        Assert.Equal(SyncUiStatus.ReconnectNeeded, fixture.Coordinator.State.Status);
+        Assert.Equal("Dropbox refresh token rejected; reconnect.", fixture.Coordinator.State.Message);
+    }
+
     private static ArchiveSnapshot Snapshot(string hash)
     {
         var path = Path.GetTempFileName();
