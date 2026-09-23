@@ -89,6 +89,19 @@ public sealed class WheelWitchInteropTests
     }
 
     [Fact]
+    public void MissingRestoredEntry_DoesNotExposeArchivePathInFailure()
+    {
+        const string privateEntryName = "private-ghost-name.ghost";
+        using var temp = new WheelSyncArchiveReaderTests.TemporaryDirectory();
+        var missingPath = Path.Combine(temp.Path, privateEntryName);
+
+        var error = Assert.Throws<IOException>(() => OpenRestoredEntry(missingPath));
+
+        Assert.Equal("Restored archive content is unavailable.", error.Message);
+        Assert.Null(error.InnerException);
+    }
+
+    [Fact]
     public void BothChangedSidesProduceConflict()
     {
         Assert.Equal(SyncAction.Conflict, SaveSyncEngine.Decide("remote-new", "remote-old", "local-new", "local-old"));
@@ -124,13 +137,29 @@ public sealed class WheelWitchInteropTests
         foreach (var entry in validated.Entries)
         {
             var sourceEntry = archive.GetEntry(entry.ArchivePath);
-            Assert.NotNull(sourceEntry);
+            Assert.True(sourceEntry is not null, "Validated archive entry was not found.");
             var (root, relative) = entry.ArchivePath.StartsWith("RetroWFC/", StringComparison.Ordinal)
                 ? (saveRoot, entry.ArchivePath["RetroWFC/".Length..])
                 : (wiiRoot, entry.ArchivePath["Wii/".Length..]);
-            await using var originalBytes = sourceEntry.Open();
-            await using var restoredBytes = File.OpenRead(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+            await using var originalBytes = sourceEntry!.Open();
+            await using var restoredBytes = OpenRestoredEntry(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
             Assert.True(await StreamsEqualAsync(originalBytes, restoredBytes));
+        }
+    }
+
+    private static FileStream OpenRestoredEntry(string path)
+    {
+        try
+        {
+            return File.OpenRead(path);
+        }
+        catch (IOException)
+        {
+            throw new IOException("Restored archive content is unavailable.");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw new IOException("Restored archive content is unavailable.");
         }
     }
 
