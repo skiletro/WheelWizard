@@ -49,6 +49,14 @@ public sealed class DolphinSessionMonitorTests
         Assert.Equal(expected, DolphinProcessUserPath.Match(commandLine, userFolder));
     }
 
+    [Fact]
+    public void Nul_separated_argv_preserves_user_folder_with_spaces()
+    {
+        const string argv = "dolphin-emu\0-u\0/home/user/wheel wizard dolphin\0";
+
+        Assert.True(DolphinProcessUserPath.Match(argv, "/home/user/wheel wizard dolphin"));
+    }
+
     private static Process StartExitedWrapper()
     {
         if (OperatingSystem.IsWindows())

@@ -132,7 +132,7 @@ public sealed class SystemDolphinProcessProbe : IDolphinProcessProbe
             if (OperatingSystem.IsLinux())
             {
                 var commandLinePath = $"/proc/{processId}/cmdline";
-                return File.Exists(commandLinePath) ? File.ReadAllText(commandLinePath).Replace('\0', ' ') : null;
+                return File.Exists(commandLinePath) ? File.ReadAllText(commandLinePath) : null;
             }
             if (OperatingSystem.IsMacOS())
             {
@@ -173,12 +173,32 @@ public static class DolphinProcessUserPath
     {
         if (string.IsNullOrWhiteSpace(commandLine))
             return null;
+        if (commandLine.Contains('\0'))
+            return MatchArgumentVector(commandLine.Split('\0', StringSplitOptions.RemoveEmptyEntries), resolvedUserFolder);
         var match = UserArgument.Match(commandLine);
         if (!match.Success)
             return null;
         var argument = match.Groups[1].Success ? match.Groups[1].Value
             : match.Groups[2].Success ? match.Groups[2].Value
             : match.Groups[3].Value;
+        return MatchesPath(argument, resolvedUserFolder);
+    }
+
+    private static bool? MatchArgumentVector(IReadOnlyList<string> arguments, string resolvedUserFolder)
+    {
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            var argument = arguments[index];
+            if (argument is "-u" or "--user")
+                return index + 1 < arguments.Count ? MatchesPath(arguments[index + 1], resolvedUserFolder) : null;
+            if (argument.StartsWith("--user=", StringComparison.Ordinal))
+                return MatchesPath(argument["--user=".Length..], resolvedUserFolder);
+        }
+        return null;
+    }
+
+    private static bool? MatchesPath(string argument, string resolvedUserFolder)
+    {
         try
         {
             var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
