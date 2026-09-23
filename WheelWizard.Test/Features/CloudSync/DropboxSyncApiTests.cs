@@ -169,7 +169,7 @@ public class DropboxSyncApiTests
             CorruptDownload("""{"rev":"state-rev","server_modified":"2026-09-23T00:00:00Z"}"""));
         var api = CreateApi(handler);
 
-        Assert.Null(await api.ReadLockAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidDataException>(() => api.ReadLockAsync(CancellationToken.None));
         Assert.Null(await api.ReadStateAsync(CancellationToken.None));
     }
 

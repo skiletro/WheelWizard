@@ -150,7 +150,7 @@ public sealed class DropboxSyncApi : IDropboxSyncApi
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException or ArgumentOutOfRangeException)
         {
-            return null;
+            throw new InvalidDataException("Dropbox sync lock contains malformed JSON.", exception);
         }
     }
 
