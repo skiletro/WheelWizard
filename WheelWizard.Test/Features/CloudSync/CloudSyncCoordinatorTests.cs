@@ -33,10 +33,12 @@ public sealed class CloudSyncCoordinatorTests
         {
             await coordinator.RestoreSessionAsync(CancellationToken.None);
             await coordinator.ReconcileSessionAsync(dolphinConfirmedRunning: false, CancellationToken.None);
+            await coordinator.SessionStartedAsync(CancellationToken.None);
 
             Assert.Equal(SyncUiStatus.Idle, coordinator.State.Status);
             await oauth.DidNotReceive().ConnectAsync(Arg.Any<CancellationToken>());
-            await api.DidNotReceive().GetSaveMetadataAsync(Arg.Any<CancellationToken>());
+            Assert.Empty(api.ReceivedCalls());
+            await coordinator.SessionEndedAsync(CancellationToken.None);
             await coordinator.SyncNowAsync(CancellationToken.None);
             await api.Received(1).GetSaveMetadataAsync(Arg.Any<CancellationToken>());
         }

@@ -186,7 +186,10 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
             {
                 _baseline = _baseline with { SessionPending = true };
                 _stateStore.Update(_baseline);
-                try { await _dropbox.WriteLockAsync(new DropboxSyncLock(_baseline.DeviceId, DateTimeOffset.UtcNow), ct).ConfigureAwait(false); } catch { }
+                if (_settings.Get<bool>(_settings.CLOUD_AUTO_SYNC))
+                {
+                    try { await _dropbox.WriteLockAsync(new DropboxSyncLock(_baseline.DeviceId, DateTimeOffset.UtcNow), ct).ConfigureAwait(false); } catch { }
+                }
             }
         }
         finally { _gate.Release(); }
