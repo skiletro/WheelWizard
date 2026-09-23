@@ -118,9 +118,85 @@ public class DropboxSyncApiTests
         await api.WriteStateAsync(new DropboxSyncState("device-1", DateTimeOffset.Parse("2026-09-23T00:00:00Z"), "hash"), CancellationToken.None);
 
         Assert.Contains("\"path\":\"/state.json\"", handler.Args.Single());
+        Assert.Contains("\"mode\":\"overwrite\"", handler.Args.Single());
         Assert.Contains("\"deviceId\":\"device-1\"", Encoding.UTF8.GetString(handler.Bodies.Single()));
         Assert.Contains("\"syncedAt\"", Encoding.UTF8.GetString(handler.Bodies.Single()));
         Assert.Contains("\"contentHash\":\"hash\"", Encoding.UTF8.GetString(handler.Bodies.Single()));
+    }
+
+    [Fact]
+    public async Task Missing_lock_uses_add_mode_and_preserves_wire_json()
+    {
+        var handler = new QueueHandler(Response(HttpStatusCode.OK, "{}"));
+        var api = CreateApi(handler);
+        var startedAt = DateTimeOffset.FromUnixTimeMilliseconds(1_798_128_000_456);
+
+        Assert.True(await api.WriteLockAsync(new DropboxSyncLock("device-1", startedAt), CancellationToken.None));
+
+        Assert.Contains("\"path\":\"/lock.json\"", handler.Args.Single());
+        Assert.Contains("\"mode\":\"add\"", handler.Args.Single());
+        Assert.DoesNotContain("overwrite", handler.Args.Single());
+        using var lockJson = System.Text.Json.JsonDocument.Parse(handler.Bodies.Single());
+        Assert.Equal("device-1", lockJson.RootElement.GetProperty("deviceId").GetString());
+        Assert.Equal(startedAt.ToUnixTimeMilliseconds(), lockJson.RootElement.GetProperty("startedAt").GetInt64());
+        Assert.Equal(2, lockJson.RootElement.EnumerateObject().Count());
+    }
+
+    [Fact]
+    public async Task Existing_stale_lock_uses_exact_read_revision_for_update()
+    {
+        var handler = new QueueHandler(Response(HttpStatusCode.OK, "{}"));
+        var api = CreateApi(handler);
+
+        Assert.True(await api.WriteLockAsync(LockWithRevision("device-1", DateTimeOffset.UtcNow, "observed-rev"), CancellationToken.None));
+
+        Assert.Contains("\"mode\":{\".tag\":\"update\",\"update\":\"observed-rev\"}", handler.Args.Single());
+        Assert.DoesNotContain("overwrite", handler.Args.Single());
+    }
+
+    [Fact]
+    public async Task Foreign_lock_added_after_missing_read_causes_add_conflict_and_is_not_owned()
+    {
+        var handler = new QueueHandler(Response(HttpStatusCode.Conflict, "{\"error\":{\"path\":{\".tag\":\"conflict\"}}}"));
+        var api = CreateApi(handler);
+
+        Assert.False(await api.WriteLockAsync(new DropboxSyncLock("device-1", DateTimeOffset.UtcNow), CancellationToken.None));
+        Assert.Contains("\"mode\":\"add\"", handler.Args.Single());
+    }
+
+    [Fact]
+    public async Task Foreign_lock_replacement_after_revision_read_causes_update_conflict_and_is_not_owned()
+    {
+        var handler = new QueueHandler(Response(HttpStatusCode.Conflict, "{\"error\":{\"path\":{\".tag\":\"conflict\"}}}"));
+        var api = CreateApi(handler);
+
+        Assert.False(await api.WriteLockAsync(LockWithRevision("device-1", DateTimeOffset.UtcNow, "observed-rev"), CancellationToken.None));
+        Assert.Contains("\"mode\":{\".tag\":\"update\",\"update\":\"observed-rev\"}", handler.Args.Single());
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Conflict, "{\"error\":{\"path\":{\".tag\":\"conflict\"}}}")]
+    [InlineData(HttpStatusCode.Conflict, "not-json")]
+    [InlineData(HttpStatusCode.Forbidden, "{}")]
+    public async Task Lock_write_conflict_and_other_failures_are_not_owned(HttpStatusCode status, string body)
+    {
+        var api = CreateApi(new QueueHandler(Response(status, body)));
+
+        Assert.False(await api.WriteLockAsync(new DropboxSyncLock("device-1", DateTimeOffset.UtcNow), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Read_lock_exposes_metadata_revision_without_changing_lock_json()
+    {
+        var handler = new QueueHandler(
+            Response(HttpStatusCode.OK, "{\"rev\":\"observed-rev\",\"server_modified\":\"2026-12-01T00:01:51.789Z\"}"),
+            AdvisoryDownload("{\"deviceId\":\"foreign-device\",\"startedAt\":1798128000456}", "{\"rev\":\"observed-rev\",\"server_modified\":\"2026-12-01T00:01:51.789Z\"}"));
+        var api = CreateApi(handler);
+
+        var cloudLock = await api.ReadLockAsync(CancellationToken.None);
+
+        Assert.Equal("observed-rev", cloudLock!.Rev);
+        Assert.Equal("foreign-device", cloudLock!.DeviceId);
     }
 
     [Fact]
@@ -183,6 +259,11 @@ public class DropboxSyncApiTests
 
     private static DropboxSyncApi CreateApi(HttpMessageHandler handler, long threshold = 140L * 1024 * 1024) =>
         new(new StaticTokenProvider(), new HttpClient(handler), threshold);
+
+    private static DropboxSyncLock LockWithRevision(string deviceId, DateTimeOffset startedAt, string rev)
+    {
+        return new DropboxSyncLock(deviceId, startedAt) { Rev = rev };
+    }
 
     private static string TempFile(string contents)
     {

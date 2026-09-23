@@ -195,10 +195,10 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
                     try
                     {
                         var existingLock = await _dropbox.ReadLockAsync(ct).ConfigureAwait(false);
-                        if (existingLock is null || !IsFreshLock(existingLock))
+                        if (existingLock is null || !IsFreshLock(existingLock) && !string.IsNullOrWhiteSpace(existingLock.Rev))
                         {
                             var startedAt = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                            var candidate = new DropboxSyncLock(_baseline.DeviceId, startedAt);
+                            var candidate = new DropboxSyncLock(_baseline.DeviceId, startedAt) { Rev = existingLock?.Rev };
                             if (await _dropbox.WriteLockAsync(candidate, ct).ConfigureAwait(false))
                             {
                                 _ownedLock = candidate;

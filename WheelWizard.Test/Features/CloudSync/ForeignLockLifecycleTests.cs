@@ -93,6 +93,37 @@ public sealed class ForeignLockLifecycleTests
     }
 
     [Fact]
+    public async Task Stale_lock_without_revision_fails_closed_without_write()
+    {
+        using var directory = new WheelSyncArchiveReaderTests.TemporaryDirectory();
+        var fixture = Create(directory.Path, "r1", "local");
+        fixture.Dropbox.Lock = new DropboxSyncLock("old-device", DateTimeOffset.UtcNow.AddHours(-3))
+        {
+            ServerModified = DateTimeOffset.UtcNow.AddHours(-3),
+        };
+
+        await fixture.Coordinator.SessionStartedAsync(CancellationToken.None);
+
+        Assert.Equal(0, fixture.Dropbox.WriteLockCount);
+        Assert.Equal("old-device", fixture.Dropbox.Lock.DeviceId);
+    }
+
+    [Fact]
+    public async Task Lock_create_conflict_does_not_claim_session_ownership()
+    {
+        using var directory = new WheelSyncArchiveReaderTests.TemporaryDirectory();
+        var fixture = Create(directory.Path, "r1", "local");
+        fixture.Dropbox.ConflictWrites = true;
+
+        await fixture.Coordinator.SessionStartedAsync(CancellationToken.None);
+        await fixture.Coordinator.SessionEndedAsync(CancellationToken.None);
+
+        Assert.Null(fixture.Dropbox.Lock);
+        Assert.Equal(1, fixture.Dropbox.WriteLockCount);
+        Assert.Equal(0, fixture.Dropbox.DeleteLockCount);
+    }
+
+    [Fact]
     public async Task Uncertain_lock_read_and_failed_write_never_establish_delete_ownership()
     {
         using var directory = new WheelSyncArchiveReaderTests.TemporaryDirectory();
@@ -169,6 +200,7 @@ public sealed class ForeignLockLifecycleTests
         public DropboxSyncLock? Lock { get; set; }
         public bool FailReads { get; set; }
         public bool FailWrites { get; set; }
+        public bool ConflictWrites { get; set; }
         public int MetadataReadCount { get; private set; }
         public int LockReadCount { get; private set; }
         public int WriteLockCount { get; private set; }
@@ -200,7 +232,7 @@ public sealed class ForeignLockLifecycleTests
         public Task<bool> WriteLockAsync(DropboxSyncLock cloudLock, CancellationToken ct)
         {
             WriteLockCount++;
-            if (FailWrites) return Task.FromResult(false);
+            if (FailWrites || ConflictWrites) return Task.FromResult(false);
             Lock = cloudLock with
             {
                 StartedAt = DateTimeOffset.FromUnixTimeMilliseconds(cloudLock.StartedAt.ToUnixTimeMilliseconds()),

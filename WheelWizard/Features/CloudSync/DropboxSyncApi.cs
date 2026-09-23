@@ -10,6 +10,9 @@ public sealed record CloudSaveMetadata(string Rev, DateTimeOffset ServerModified
 public sealed record DropboxSyncLock(string DeviceId, DateTimeOffset StartedAt)
 {
     [System.Text.Json.Serialization.JsonIgnore]
+    public string? Rev { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
     public DateTimeOffset ServerModified { get; init; }
 }
 public sealed record DropboxSyncState(string DeviceId, DateTimeOffset SyncedAt, string ContentHash);
@@ -114,10 +117,11 @@ public sealed class DropboxSyncApi : IDropboxSyncApi
     {
         try
         {
-            await UploadJsonAsync("/lock.json", cloudLock, ct).ConfigureAwait(false);
+            await UploadJsonAsync("/lock.json", cloudLock, MakeMode(cloudLock.Rev), ct).ConfigureAwait(false);
             return true;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (DropboxConflictException) { return false; }
         catch (Exception) { return false; }
     }
 
@@ -135,7 +139,7 @@ public sealed class DropboxSyncApi : IDropboxSyncApi
 
     public async Task WriteStateAsync(DropboxSyncState state, CancellationToken ct)
     {
-        try { await UploadJsonAsync("/state.json", state, ct).ConfigureAwait(false); }
+        try { await UploadJsonAsync("/state.json", state, "overwrite", ct).ConfigureAwait(false); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception) { }
     }
@@ -150,7 +154,7 @@ public sealed class DropboxSyncApi : IDropboxSyncApi
             var root = document.RootElement;
             var deviceId = GetProperty(root, "deviceId").GetString() ?? throw new JsonException();
             var startedAt = DateTimeOffset.FromUnixTimeMilliseconds(GetProperty(root, "startedAt").GetInt64());
-            return new DropboxSyncLock(deviceId, startedAt) { ServerModified = metadata.ServerModified };
+            return new DropboxSyncLock(deviceId, startedAt) { Rev = metadata.Rev, ServerModified = metadata.ServerModified };
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException or ArgumentOutOfRangeException)
         {
@@ -188,7 +192,7 @@ public sealed class DropboxSyncApi : IDropboxSyncApi
         return (await download.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false), metadata);
     }
 
-    private async Task UploadJsonAsync<T>(string path, T value, CancellationToken ct)
+    private async Task UploadJsonAsync<T>(string path, T value, object mode, CancellationToken ct)
     {
         object wireValue = value switch
         {
@@ -197,8 +201,10 @@ public sealed class DropboxSyncApi : IDropboxSyncApi
             _ => throw new InvalidOperationException("Unsupported Dropbox advisory JSON type."),
         };
         var bytes = JsonSerializer.SerializeToUtf8Bytes(wireValue, JsonOptions);
-        var arg = JsonSerializer.Serialize(new { path, mode = "overwrite", autorename = false, strict_conflict = true });
+        var arg = JsonSerializer.Serialize(new { path, mode, autorename = false, strict_conflict = true });
         using var response = await SendAsync(() => ContentRequest("upload", arg, () => new ByteArrayContent(bytes)), ct).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.Conflict && IsPathError(response, "conflict"))
+            throw new DropboxConflictException($"Dropbox {path} changed during write.");
         EnsureSuccess(response, $"Could not write Dropbox {path}.");
     }
 
