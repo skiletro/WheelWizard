@@ -14,6 +14,14 @@ public class DropboxSyncApiTests
         Assert.Null(await api.GetSaveMetadataAsync(CancellationToken.None));
     }
 
+    [Fact]
+    public async Task MetadataTimeoutThrowsRatherThanReturningMissing()
+    {
+        var api = CreateApi(new TimeoutHandler());
+
+        await Assert.ThrowsAsync<TaskCanceledException>(() => api.GetSaveMetadataAsync(CancellationToken.None));
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Conflict, """{"error":{"path":{".tag":"other"}}}""")]
     [InlineData(HttpStatusCode.NotFound, "{}")]
@@ -129,7 +137,7 @@ public class DropboxSyncApiTests
         Assert.Null(await api.ReadStateAsync(CancellationToken.None));
     }
 
-    private static DropboxSyncApi CreateApi(QueueHandler handler, long threshold = 140L * 1024 * 1024) =>
+    private static DropboxSyncApi CreateApi(HttpMessageHandler handler, long threshold = 140L * 1024 * 1024) =>
         new(new StaticTokenProvider(), new HttpClient(handler), threshold);
 
     private static string TempFile(string contents)
@@ -161,6 +169,12 @@ public class DropboxSyncApiTests
             return Task.FromResult(forceRefresh ? "refreshed" : "token");
         }
         public Task DisconnectAsync(CancellationToken ct) => throw new NotImplementedException();
+    }
+
+    private sealed class TimeoutHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new TaskCanceledException("Simulated Dropbox request timeout.", new TimeoutException());
     }
 
     private sealed class QueueHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
