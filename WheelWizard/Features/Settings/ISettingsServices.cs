@@ -39,6 +39,7 @@ public interface ISettingsProperties
     Setting FORCE_WIIMOTE { get; }
     Setting LAUNCH_WITH_DOLPHIN { get; }
     Setting LAUNCH_RR_ON_STARTUP { get; }
+    Setting CLOUD_AUTO_SYNC { get; }
     Setting ENABLE_RECOMP { get; }
     Setting RECOMP_USE_DOLPHIN_DATA { get; }
     Setting RECOMP_COPY_DOLPHIN_NAND { get; }

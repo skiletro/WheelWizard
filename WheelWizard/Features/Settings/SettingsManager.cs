@@ -180,6 +180,7 @@ public class SettingsManager : ISettingsManager
         FORCE_WIIMOTE = RegisterWhWz("ForceWiimote", false);
         LAUNCH_WITH_DOLPHIN = RegisterWhWz("LaunchWithDolphin", false);
         LAUNCH_RR_ON_STARTUP = RegisterWhWz("LaunchRrOnStartup", false);
+        CLOUD_AUTO_SYNC = RegisterWhWz("CloudAutoSync", true);
         PREFERS_MODS_ROW_VIEW = RegisterWhWz("PrefersModsRowView", true);
         USE_PATCHES_SYSTEM = RegisterWhWz("UsePatchesSystem", false);
         FOCUSED_USER = RegisterWhWz("FavoriteUser", 0, value => (int)(value ?? -1) >= 0 && (int)(value ?? -1) < 4);
@@ -281,6 +282,7 @@ public class SettingsManager : ISettingsManager
     public Setting FORCE_WIIMOTE { get; }
     public Setting LAUNCH_WITH_DOLPHIN { get; }
     public Setting LAUNCH_RR_ON_STARTUP { get; }
+    public Setting CLOUD_AUTO_SYNC { get; }
     public Setting ENABLE_RECOMP { get; }
     public Setting RECOMP_USE_DOLPHIN_DATA { get; }
     public Setting RECOMP_COPY_DOLPHIN_NAND { get; }

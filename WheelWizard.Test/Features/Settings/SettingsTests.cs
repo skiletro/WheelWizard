@@ -26,6 +26,14 @@ public class SettingsManagerTests
     }
 
     [Fact]
+    public void CloudAutoSync_DefaultsToEnabled()
+    {
+        var manager = CreateManager(new MockFileSystem(), out _, out _, out _);
+
+        Assert.True(manager.Get<bool>(manager.CLOUD_AUTO_SYNC));
+    }
+
+    [Fact]
     public void Set_Throws_WhenProvidedValueIsNull()
     {
         var manager = CreateManager(new MockFileSystem(), out _, out _, out _);
