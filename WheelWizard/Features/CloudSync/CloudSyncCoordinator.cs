@@ -228,13 +228,15 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
 
     private async Task SyncCoreAsync(CancellationToken ct)
     {
+        RefreshResolvedPaths();
         var paths = _resolvedPaths!;
         var baseline = _baseline!;
         Publish(SyncUiStatus.Busy, "Checking cloud save.", _accountId, baseline.LastSync);
         await _restore.RecoverAsync(paths, ct).ConfigureAwait(false);
         var remote = await _dropbox.GetSaveMetadataAsync(ct).ConfigureAwait(false);
         var snapshot = await MakeSnapshotAsync(paths, ct).ConfigureAwait(false);
-        var action = SaveSyncEngine.Decide(remote?.Rev, baseline.Rev, snapshot?.Hash, baseline.LocalHash);
+        var localHash = snapshot?.Hash;
+        var action = SaveSyncEngine.Decide(remote?.Rev, baseline.Rev, localHash, baseline.LocalHash);
         DeleteSnapshot(snapshot);
         if (action is SyncAction.Conflict or SyncAction.FreshDevice)
         {
@@ -246,7 +248,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         }
         if (action == SyncAction.Pull)
         {
-            await PullAsync(remote!.Rev, ct).ConfigureAwait(false);
+            await PullAsync(remote!.Rev, ct, localHash).ConfigureAwait(false);
             return;
         }
         if (action is SyncAction.Push or SyncAction.FirstUpload)
@@ -265,6 +267,8 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
     private async Task PushAsync(string? expectedRev, CancellationToken ct)
     {
         var paths = _resolvedPaths!;
+        if (!RefreshPathsBeforeOperation(paths, expectedRev)) return;
+        paths = _resolvedPaths!;
         var snapshot = await MakeSnapshotAsync(paths, ct).ConfigureAwait(false);
         if (snapshot is null)
         {
@@ -283,6 +287,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
                 }
             }
             finally { DeleteSnapshot(current); }
+            if (!RefreshPathsBeforeOperation(paths, expectedRev)) return;
             try
             {
                 var metadata = await _dropbox.UploadAsync(snapshot.FilePath, expectedRev, ct).ConfigureAwait(false);
@@ -296,19 +301,57 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         finally { DeleteSnapshot(snapshot); }
     }
 
-    private async Task PullAsync(string rev, CancellationToken ct)
+    private async Task PullAsync(string rev, CancellationToken ct, string? expectedLocalHash = null)
     {
+        var paths = _resolvedPaths!;
         var path = Path.Combine(Path.GetTempPath(), $"wheelwizard-cloud-{Guid.NewGuid():N}.zip");
+        var beforeDownload = expectedLocalHash is null
+            ? await MakeSnapshotAsync(paths, ct).ConfigureAwait(false)
+            : null;
+        var localHashAtDownload = expectedLocalHash ?? beforeDownload?.Hash;
         try
         {
             var downloaded = await _dropbox.DownloadAsync(rev, path, ct).ConfigureAwait(false);
             if (downloaded.Rev != rev) throw new InvalidDataException("Dropbox save revision changed during download.");
             await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             using var archive = await _reader.ValidateAsync(stream, ct).ConfigureAwait(false);
-            var localHash = await _restore.RestoreAsync(archive, _resolvedPaths!, ct).ConfigureAwait(false);
-            await CommitSuccessAsync(rev, localHash, ct).ConfigureAwait(false);
+
+            RefreshResolvedPaths();
+            if (!SameRoots(paths, _resolvedPaths!))
+            {
+                _pendingRev = rev;
+                _pendingAction = SyncAction.FreshDevice;
+                Publish(SyncUiStatus.CloudFound, "Dolphin save paths changed during download; choose whether to restore cloud save.", _accountId, _baseline?.LastSync);
+                return;
+            }
+
+            var current = await MakeSnapshotAsync(paths, ct).ConfigureAwait(false);
+            try
+            {
+                if (current?.Hash != localHashAtDownload)
+                {
+                    var latest = await _dropbox.GetSaveMetadataAsync(ct).ConfigureAwait(false);
+                    if (latest is null)
+                    {
+                        Publish(SyncUiStatus.Error, "Local saves changed during download; cloud save is now missing.", _accountId, _baseline?.LastSync);
+                        return;
+                    }
+                    _pendingRev = latest.Rev;
+                    _pendingAction = SyncAction.Conflict;
+                    Publish(SyncUiStatus.Conflict, "Local saves changed during cloud download; choose how to resolve the conflict.", _accountId, _baseline?.LastSync);
+                    return;
+                }
+            }
+            finally { DeleteSnapshot(current); }
+
+            var restoredHash = await _restore.RestoreAsync(archive, paths, ct).ConfigureAwait(false);
+            await CommitSuccessAsync(rev, restoredHash, ct).ConfigureAwait(false);
         }
-        finally { if (File.Exists(path)) File.Delete(path); }
+        finally
+        {
+            DeleteSnapshot(beforeDownload);
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
 
     private async Task<ArchiveSnapshot?> MakeSnapshotAsync(DolphinSavePaths paths, CancellationToken ct) => await _writer.CreateAsync(paths, ct).ConfigureAwait(false);
@@ -323,7 +366,8 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         var syncedAt = DateTimeOffset.UtcNow;
         _baseline = _baseline! with { Rev = rev, LocalHash = hash, LastSync = syncedAt };
         _stateStore.Update(_baseline);
-        await _dropbox.WriteStateAsync(new DropboxSyncState(_baseline.DeviceId, syncedAt, hash), ct).ConfigureAwait(false);
+        try { await _dropbox.WriteStateAsync(new DropboxSyncState(_baseline.DeviceId, syncedAt, hash), ct).ConfigureAwait(false); }
+        catch (Exception) { }
         Publish(SyncUiStatus.Idle, null, _accountId, syncedAt);
     }
 
@@ -377,6 +421,52 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         if (deferredChoice is { } choice) await ResolveAsync(choice, ct).ConfigureAwait(false);
         if (manualSyncQueued) await SyncNowAsync(ct).ConfigureAwait(false);
         else if (syncAfter) await AutoSyncAsync(ct).ConfigureAwait(false);
+    }
+
+    private void RefreshResolvedPaths()
+    {
+        var currentPaths = _paths.TryResolve();
+        if (currentPaths is null)
+        {
+            _resolvedPaths = null;
+            _baseline = null;
+            throw new InvalidOperationException("Dolphin save paths are unavailable.");
+        }
+        if (_resolvedPaths is not null && SameRoots(_resolvedPaths, currentPaths))
+            return;
+
+        _resolvedPaths = currentPaths;
+        if (_accountId is not null)
+            _baseline = _stateStore.ReadFor(_accountId, currentPaths);
+    }
+
+    private static bool SameRoots(DolphinSavePaths left, DolphinSavePaths right) =>
+        SamePath(left.UserFolder, right.UserFolder)
+        && SamePath(left.SaveRoot, right.SaveRoot)
+        && SamePath(left.WiiRoot, right.WiiRoot);
+
+    private bool RefreshPathsBeforeOperation(DolphinSavePaths paths, string? remoteRev)
+    {
+        RefreshResolvedPaths();
+        if (SameRoots(paths, _resolvedPaths!)) return true;
+
+        if (remoteRev is not null)
+        {
+            _pendingRev = remoteRev;
+            _pendingAction = SyncAction.FreshDevice;
+            Publish(SyncUiStatus.CloudFound, "Dolphin save paths changed before sync; choose how to use the cloud save.", _accountId, _baseline?.LastSync);
+        }
+        else
+        {
+            Publish(SyncUiStatus.Idle, "Dolphin save paths changed before sync; retry to use new paths.", _accountId, _baseline?.LastSync);
+        }
+        return false;
+    }
+
+    private static bool SamePath(string left, string right)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), comparison);
     }
 
     private void Publish(SyncUiStatus status, string? message = null, string? account = null, DateTimeOffset? lastSync = null)

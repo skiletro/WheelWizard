@@ -111,6 +111,304 @@ public sealed class CloudSyncCoordinatorTests
         await fixture.Restore.DidNotReceive().RestoreAsync(Arg.Any<ValidatedArchive>(), Arg.Any<DolphinSavePaths>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Account_change_rebinds_baseline_before_sync()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        fixture.Oauth.ConnectAsync(Arg.Any<CancellationToken>()).Returns(
+            Task.FromResult(("account", "first@example.com")),
+            Task.FromResult(("other-account", "second@example.com")));
+        fixture.StateStore.ReadFor("other-account", fixture.Paths).Returns(new SyncState("device", "other-account", fixture.Paths.UserFolder, fixture.Paths.SaveRoot, fixture.Paths.WiiRoot, null, null, false, null));
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow)));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.SyncNowAsync(CancellationToken.None);
+
+        fixture.StateStore.Received(1).ReadFor("other-account", fixture.Paths);
+        Assert.Equal("other-account", fixture.Coordinator.State.AccountId);
+        Assert.Equal(SyncUiStatus.CloudFound, fixture.Coordinator.State.Status);
+        await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Fresh_device_with_local_and_cloud_save_waits_for_choice()
+    {
+        var fixture = CreateFixture(null, null);
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow)));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.SyncNowAsync(CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.CloudFound, fixture.Coordinator.State.Status);
+        await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Local_only_change_uploads_with_current_revision()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("new-local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r1", DateTimeOffset.UtcNow)));
+        fixture.Api.UploadAsync(Arg.Any<string>(), "r1", Arg.Any<CancellationToken>()).Returns(Task.FromResult(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow)));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.SyncNowAsync(CancellationToken.None);
+
+        await fixture.Api.Received(1).UploadAsync(Arg.Any<string>(), "r1", Arg.Any<CancellationToken>());
+        Assert.Equal(SyncUiStatus.Idle, fixture.Coordinator.State.Status);
+    }
+
+    [Fact]
+    public async Task Remote_only_change_restores_cloud_revision()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("old-local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow)));
+        fixture.Api.DownloadAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(call =>
+        {
+            File.WriteAllBytes(call.ArgAt<string>(1), [1, 2, 3]);
+            return Task.FromResult(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow));
+        });
+        fixture.Reader.ValidateAsync(Arg.Any<Stream>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult<ValidatedArchive>(null!));
+        fixture.Restore.RestoreAsync(Arg.Any<ValidatedArchive>(), fixture.Paths, Arg.Any<CancellationToken>()).Returns("restored-hash");
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.SyncNowAsync(CancellationToken.None);
+
+        await fixture.Api.Received(1).DownloadAsync("r2", Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await fixture.Restore.Received(1).RestoreAsync(Arg.Any<ValidatedArchive>(), fixture.Paths, Arg.Any<CancellationToken>());
+        fixture.StateStore.Received().Update(Arg.Is<SyncState>(state => state.Rev == "r2" && state.LocalHash == "restored-hash"));
+    }
+
+    [Fact]
+    public async Task Missing_cloud_and_local_save_first_uploads()
+    {
+        var fixture = CreateFixture(null, null);
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(null));
+        fixture.Api.UploadAsync(Arg.Any<string>(), Arg.Is<string?>(rev => rev == null), Arg.Any<CancellationToken>()).Returns(Task.FromResult(new CloudSaveMetadata("r1", DateTimeOffset.UtcNow)));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.SyncNowAsync(CancellationToken.None);
+
+        await fixture.Api.Received(1).UploadAsync(Arg.Any<string>(), Arg.Is<string?>(rev => rev == null), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SkippedSettingsDoNotCausePush()
+    {
+        using var temp = new WheelSyncArchiveReaderTests.TemporaryDirectory();
+        var paths = new DolphinSavePaths(temp.Path, Path.Combine(temp.Path, "RetroWFC"), Path.Combine(temp.Path, "Wii"), "6.4.0");
+        Directory.CreateDirectory(paths.SaveRoot);
+        Directory.CreateDirectory(paths.WiiRoot);
+        var gatedLocal = Path.Combine(paths.WiiRoot, "shared2/Pulsar/RetroRewind6/RRGameSettings.pul");
+        Directory.CreateDirectory(Path.GetDirectoryName(gatedLocal)!);
+        await File.WriteAllBytesAsync(gatedLocal, [8]);
+        var writer = new WheelSyncArchiveWriter();
+        var initial = await writer.CreateAsync(paths, CancellationToken.None);
+        Assert.NotNull(initial);
+        var baselineHash = initial.Hash;
+        File.Delete(initial.FilePath);
+
+        var api = Substitute.For<IDropboxSyncApi>();
+        api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow)));
+        var zip = WheelSyncArchiveReaderTests.CreateZip(("Wii/shared2/Pulsar/RetroRewind6/RRGameSettings.pul", [3]), manifestJson: "{\"type\":\"wheelwitch-save\",\"version\":2,\"rrVersion\":\"6.3.1\"}");
+        var zipBytes = zip.ToArray();
+        api.DownloadAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(call =>
+        {
+            File.WriteAllBytes(call.ArgAt<string>(1), zipBytes);
+            return Task.FromResult(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow));
+        });
+
+        var source = Substitute.For<IDolphinSavePathSource>();
+        source.TryResolve().Returns(paths);
+        var store = Substitute.For<ICloudSyncStateStore>();
+        store.ReadFor("account", paths).Returns(new SyncState("device", "account", paths.UserFolder, paths.SaveRoot, paths.WiiRoot, "r1", baselineHash, false, null));
+        var settings = Substitute.For<ISettingsManager>();
+        settings.Get<bool>(settings.CLOUD_AUTO_SYNC).Returns(true);
+        var reader = new WheelSyncArchiveReader(Path.Combine(temp.Path, "stage"));
+        var restore = new SaveRestoreService(writer, Path.Combine(temp.Path, "recovery"));
+        var oauth = Substitute.For<IDropboxOAuthService>();
+        oauth.ConnectAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(("account", "user@example.com")));
+        var coordinator = new CloudSyncCoordinator(oauth, api, source, store, writer, reader, restore, Substitute.For<ICloudSyncPrompt>(), settings);
+
+        await coordinator.ConnectAsync(CancellationToken.None);
+        await coordinator.SyncNowAsync(CancellationToken.None);
+        var effectiveHash = await writer.CreateAsync(paths, CancellationToken.None);
+        Assert.NotNull(effectiveHash);
+        File.Delete(effectiveHash.FilePath);
+        await coordinator.SyncNowAsync(CancellationToken.None);
+
+        Assert.Equal(new byte[] { 8 }, await File.ReadAllBytesAsync(gatedLocal));
+        store.Received().Update(Arg.Is<SyncState>(state => state.Rev == "r2" && state.LocalHash == effectiveHash.Hash));
+        await api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Local_change_during_download_prevents_cloud_restore()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        var snapshotCount = 0;
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot(Interlocked.Increment(ref snapshotCount) == 1 ? "old-local" : "changed")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow)));
+        fixture.Api.DownloadAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(call =>
+        {
+            File.WriteAllBytes(call.ArgAt<string>(1), [1, 2, 3]);
+            return Task.FromResult(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow));
+        });
+        fixture.Reader.ValidateAsync(Arg.Any<Stream>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult<ValidatedArchive>(null!));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.SyncNowAsync(CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.Conflict, fixture.Coordinator.State.Status);
+        await fixture.Restore.DidNotReceive().RestoreAsync(Arg.Any<ValidatedArchive>(), Arg.Any<DolphinSavePaths>(), Arg.Any<CancellationToken>());
+        await fixture.Api.DidNotReceive().WriteStateAsync(Arg.Any<DropboxSyncState>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Path_change_rebinds_baseline_and_prompts_before_overwrite()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        var newPaths = new DolphinSavePaths("/other-dolphin", "/other-dolphin/RetroWFC", "/other-dolphin/Wii", "1");
+        fixture.Source.TryResolve().Returns(fixture.Paths, newPaths);
+        fixture.StateStore.ReadFor("account", newPaths).Returns(new SyncState("device", "account", newPaths.UserFolder, newPaths.SaveRoot, newPaths.WiiRoot, null, null, false, null));
+        fixture.Writer.CreateAsync(newPaths, Arg.Any<CancellationToken>()).Returns(Task.FromResult<ArchiveSnapshot?>(Snapshot("new-root-content")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow)));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.SyncNowAsync(CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.CloudFound, fixture.Coordinator.State.Status);
+        fixture.StateStore.Received(1).ReadFor("account", newPaths);
+        await fixture.Restore.DidNotReceive().RestoreAsync(Arg.Any<ValidatedArchive>(), Arg.Any<DolphinSavePaths>(), Arg.Any<CancellationToken>());
+        await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Path_change_before_upload_stops_old_root_upload()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        var newPaths = new DolphinSavePaths("/other-dolphin", "/other-dolphin/RetroWFC", "/other-dolphin/Wii", "1");
+        fixture.Source.TryResolve().Returns(fixture.Paths, fixture.Paths, newPaths);
+        fixture.StateStore.ReadFor("account", newPaths).Returns(new SyncState("device", "account", newPaths.UserFolder, newPaths.SaveRoot, newPaths.WiiRoot, null, null, false, null));
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("new-local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r1", DateTimeOffset.UtcNow)));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.SyncNowAsync(CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.CloudFound, fixture.Coordinator.State.Status);
+        fixture.StateStore.Received(1).ReadFor("account", newPaths);
+        await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Corrupt_zip_does_not_restore_or_advance_baseline()
+    {
+        using var temp = new WheelSyncArchiveReaderTests.TemporaryDirectory();
+        var paths = new DolphinSavePaths(temp.Path, Path.Combine(temp.Path, "RetroWFC"), Path.Combine(temp.Path, "Wii"), "1");
+        var localFile = Path.Combine(paths.SaveRoot, "RMCP/rksys.dat");
+        Directory.CreateDirectory(Path.GetDirectoryName(localFile)!);
+        await File.WriteAllBytesAsync(localFile, [7, 8]);
+        var writer = new WheelSyncArchiveWriter();
+        var localSnapshot = await writer.CreateAsync(paths, CancellationToken.None);
+        Assert.NotNull(localSnapshot);
+        var localHash = localSnapshot.Hash;
+        File.Delete(localSnapshot.FilePath);
+
+        var api = Substitute.For<IDropboxSyncApi>();
+        api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow)));
+        api.DownloadAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(call =>
+        {
+            File.WriteAllBytes(call.ArgAt<string>(1), [1, 2, 3]);
+            return Task.FromResult(new CloudSaveMetadata("r2", DateTimeOffset.UtcNow));
+        });
+        var source = Substitute.For<IDolphinSavePathSource>();
+        source.TryResolve().Returns(paths);
+        var store = Substitute.For<ICloudSyncStateStore>();
+        store.ReadFor("account", paths).Returns(new SyncState("device", "account", paths.UserFolder, paths.SaveRoot, paths.WiiRoot, "r1", localHash, false, null));
+        var settings = Substitute.For<ISettingsManager>();
+        settings.Get<bool>(settings.CLOUD_AUTO_SYNC).Returns(true);
+        var oauth = Substitute.For<IDropboxOAuthService>();
+        oauth.ConnectAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(("account", "user@example.com")));
+        var reader = new WheelSyncArchiveReader(Path.Combine(temp.Path, "stage"));
+        var restore = new SaveRestoreService(writer, Path.Combine(temp.Path, "recovery"));
+        var coordinator = new CloudSyncCoordinator(oauth, api, source, store, writer, reader, restore, Substitute.For<ICloudSyncPrompt>(), settings);
+
+        await coordinator.ConnectAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidDataException>(() => coordinator.SyncNowAsync(CancellationToken.None));
+
+        Assert.Equal(new byte[] { 7, 8 }, await File.ReadAllBytesAsync(localFile));
+        store.DidNotReceive().Update(Arg.Is<SyncState>(state => state.Rev == "r2"));
+    }
+
+    [Fact]
+    public async Task State_json_write_failure_does_not_fail_successful_upload()
+    {
+        var fixture = CreateFixture(null, null);
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(null));
+        fixture.Api.UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(new CloudSaveMetadata("r1", DateTimeOffset.UtcNow)));
+        fixture.Api.WriteStateAsync(Arg.Any<DropboxSyncState>(), Arg.Any<CancellationToken>()).Returns<Task>(_ => throw new IOException("state write failed"));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.SyncNowAsync(CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.Idle, fixture.Coordinator.State.Status);
+        fixture.StateStore.Received().Update(Arg.Is<SyncState>(state => state.Rev == "r1" && state.LocalHash == "local"));
+    }
+
+    [Fact]
+    public async Task Metadata_forbidden_is_not_cloud_missing_or_uploadable()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("new-local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns<Task<CloudSaveMetadata?>>(_ => throw new DropboxAccessException("forbidden", System.Net.HttpStatusCode.Forbidden));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<DropboxAccessException>(() => fixture.Coordinator.SyncNowAsync(CancellationToken.None));
+
+        Assert.Equal(SyncUiStatus.Error, fixture.Coordinator.State.Status);
+        await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Metadata_timeout_auto_sync_is_offline_error_without_upload()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("new-local")));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns<Task<CloudSaveMetadata?>>(_ => throw new TimeoutException("metadata timeout"));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.AutoSyncAsync(CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.Error, fixture.Coordinator.State.Status);
+        await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Metadata_timeout_manual_sync_reports_error_without_upload()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns<Task<CloudSaveMetadata?>>(_ => throw new TimeoutException("metadata timeout"));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<TimeoutException>(() => fixture.Coordinator.SyncNowAsync(CancellationToken.None));
+
+        Assert.Equal(SyncUiStatus.Error, fixture.Coordinator.State.Status);
+        await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    private static ArchiveSnapshot Snapshot(string hash)
+    {
+        var path = Path.GetTempFileName();
+        return new ArchiveSnapshot(path, hash);
+    }
+
     private static CoordinatorFixture CreateFixture(string? baselineRev, string? baselineHash, bool autoSync = true)
     {
         var oauth = Substitute.For<IDropboxOAuthService>();
@@ -128,11 +426,12 @@ public sealed class CloudSyncCoordinatorTests
         var restore = Substitute.For<ISaveRestoreService>();
         var prompt = Substitute.For<ICloudSyncPrompt>();
         var coordinator = new CloudSyncCoordinator(oauth, api, source, store, writer, reader, restore, prompt, settings);
-        return new CoordinatorFixture(paths, api, writer, reader, restore, coordinator);
+        return new CoordinatorFixture(paths, oauth, source, store, api, writer, reader, restore, coordinator);
     }
 
-    private sealed record CoordinatorFixture(DolphinSavePaths Paths, IDropboxSyncApi Api, IWheelSyncArchiveWriter Writer,
-        IWheelSyncArchiveReader Reader, ISaveRestoreService Restore, CloudSyncCoordinator Coordinator);
+    private sealed record CoordinatorFixture(DolphinSavePaths Paths, IDropboxOAuthService Oauth, IDolphinSavePathSource Source,
+        ICloudSyncStateStore StateStore, IDropboxSyncApi Api, IWheelSyncArchiveWriter Writer, IWheelSyncArchiveReader Reader,
+        ISaveRestoreService Restore, CloudSyncCoordinator Coordinator);
 
     [Fact]
     public async Task Concurrent_sync_now_calls_are_serialized()
