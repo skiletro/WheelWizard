@@ -249,6 +249,30 @@ public sealed class CloudSyncSettingsTests
         }
     }
 
+    [Theory]
+    [InlineData(SyncUiStatus.Error, "Dropbox access denied (403)", false)]
+    [InlineData(SyncUiStatus.ReconnectNeeded, "Dropbox refresh token rejected; reconnect.", true)]
+    public async Task Repeated_identical_coordinator_diagnostic_is_preserved(
+        SyncUiStatus status, string message, bool reconnectRequired)
+    {
+        var diagnostic = new SyncUiState(status, message);
+        var coordinator = Substitute.For<ICloudSyncCoordinator>();
+        coordinator.State.Returns(diagnostic);
+        Exception failure = reconnectRequired
+            ? new DropboxReconnectRequiredException(message)
+            : new IOException("request failed");
+        coordinator.SyncNowAsync(Arg.Any<CancellationToken>()).Returns<Task>(_ => throw failure);
+        coordinator.ConnectAsync(Arg.Any<CancellationToken>()).Returns<Task>(_ => throw failure);
+        var viewModel = CreateViewModel(coordinator, Substitute.For<ISettingsManager>());
+
+        if (reconnectRequired)
+            await viewModel.ConnectAsync(CancellationToken.None);
+        else
+            await viewModel.SyncNowAsync(CancellationToken.None);
+
+        Assert.Equal(message, viewModel.StatusText);
+    }
+
     [Fact]
     public async Task Unpublished_manual_failure_uses_safe_fallback()
     {

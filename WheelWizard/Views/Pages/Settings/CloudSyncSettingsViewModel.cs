@@ -124,7 +124,7 @@ public sealed class CloudSyncSettingsViewModel : INotifyPropertyChanged, IDispos
         catch (DropboxReconnectRequiredException)
         {
             var published = _coordinator.State;
-            if (published.Status != previousState.Status || published.Message != previousState.Message)
+            if (published.Status != previousState.Status || !string.IsNullOrWhiteSpace(published.Message))
                 UpdateState(published);
             else
                 UpdateState(new SyncUiState(SyncUiStatus.ReconnectNeeded, null, _state.AccountId, _state.LastSync));
@@ -132,7 +132,7 @@ public sealed class CloudSyncSettingsViewModel : INotifyPropertyChanged, IDispos
         catch
         {
             var published = _coordinator.State;
-            if (published.Status != previousState.Status || published.Message != previousState.Message)
+            if (published.Status != previousState.Status || !string.IsNullOrWhiteSpace(published.Message))
                 UpdateState(published);
             else
                 UpdateState(new SyncUiState(SyncUiStatus.Error, null, _state.AccountId, _state.LastSync));
