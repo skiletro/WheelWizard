@@ -35,6 +35,7 @@ public interface ICloudSyncCoordinator
     Task SessionStartedAsync(CancellationToken ct);
     Task SessionLaunchFailedAsync(CancellationToken ct);
     Task SessionEndedAsync(CancellationToken ct);
+    Task ReconcileSessionAsync(bool dolphinConfirmedRunning, CancellationToken ct);
     Task ResolveAsync(ConflictChoice choice, CancellationToken ct);
     Task DisconnectAsync(CancellationToken ct);
     void SetAutoSync(bool enabled);
@@ -142,6 +143,27 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
 
     public async Task SessionLaunchFailedAsync(CancellationToken ct) => await EndSessionAsync(syncAfter: false, ct).ConfigureAwait(false);
     public async Task SessionEndedAsync(CancellationToken ct) => await EndSessionAsync(syncAfter: true, ct).ConfigureAwait(false);
+
+    public async Task ReconcileSessionAsync(bool dolphinConfirmedRunning, CancellationToken ct)
+    {
+        if (dolphinConfirmedRunning)
+        {
+            await _gate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                RefreshResolvedPaths();
+                _sessionActive = true;
+                Publish(SyncUiStatus.QueuedForExit, "Sync deferred while Dolphin is running.", _accountId, _baseline?.LastSync);
+            }
+            finally { _gate.Release(); }
+            return;
+        }
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try { RefreshResolvedPaths(); }
+        finally { _gate.Release(); }
+        await EndSessionAsync(syncAfter: true, ct).ConfigureAwait(false);
+    }
 
     public async Task ResolveAsync(ConflictChoice choice, CancellationToken ct)
     {

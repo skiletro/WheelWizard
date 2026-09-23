@@ -8,6 +8,7 @@ using WheelWizard.CustomCharacters;
 using WheelWizard.CustomDistributions;
 using WheelWizard.DolphinInstaller;
 using WheelWizard.Features.Archives;
+using WheelWizard.Features.CloudSync;
 using WheelWizard.Features.Patches;
 using WheelWizard.GameBanana;
 using WheelWizard.GitHub;
@@ -37,6 +38,9 @@ public static class SetupExtensions
         services.AddDolphinInstaller();
         services.AddLocalization();
         services.AddSettings();
+        services.AddSingleton<IDolphinProcessProbe, SystemDolphinProcessProbe>();
+        services.AddSingleton<IDolphinSessionMonitor, DolphinSessionMonitor>();
+        services.AddSingleton<IDolphinSavePathSource, PathManagerDolphinSavePathSource>();
         services.AddCustomCharacters();
         services.AddAutoUpdating();
         services.AddBranding();

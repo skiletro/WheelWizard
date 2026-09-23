@@ -1,4 +1,5 @@
 using WheelWizard.CustomDistributions;
+using WheelWizard.Features.CloudSync;
 using WheelWizard.Helpers;
 using WheelWizard.Models.Enums;
 using WheelWizard.Mods;
@@ -16,20 +17,33 @@ public class RrLauncher : ILauncher
     private readonly ICustomDistributionSingletonService _customDistributionSingletonService;
     private readonly IModsLaunchService _modsLaunchService;
     private readonly ISettingsManager _settingsManager;
+    private readonly ICloudSyncCoordinator _cloudSyncCoordinator;
+    private readonly IDolphinSessionMonitor _dolphinSessionMonitor;
+    private readonly IDolphinSavePathSource _dolphinSavePathSource;
+    private readonly ICloudSyncPrompt _cloudSyncPrompt;
 
     public RrLauncher(
         ICustomDistributionSingletonService customDistributionSingletonService,
         IModsLaunchService modsLaunchService,
-        ISettingsManager settingsManager
+        ISettingsManager settingsManager,
+        ICloudSyncCoordinator cloudSyncCoordinator,
+        IDolphinSessionMonitor dolphinSessionMonitor,
+        IDolphinSavePathSource dolphinSavePathSource,
+        ICloudSyncPrompt cloudSyncPrompt
     )
     {
         _customDistributionSingletonService = customDistributionSingletonService;
         _modsLaunchService = modsLaunchService;
         _settingsManager = settingsManager;
+        _cloudSyncCoordinator = cloudSyncCoordinator;
+        _dolphinSessionMonitor = dolphinSessionMonitor;
+        _dolphinSavePathSource = dolphinSavePathSource;
+        _cloudSyncPrompt = cloudSyncPrompt;
     }
 
     public async Task<OperationResult> Launch()
     {
+        var sessionMarkerStarted = false;
         try
         {
             //case SHOULD be impossible since launch button should be disabled
@@ -41,6 +55,12 @@ public class RrLauncher : ILauncher
             if (preflightResult.IsFailure)
                 return preflightResult.Error;
 
+            var syncDecision = await _cloudSyncCoordinator.PrepareLaunchAsync(CancellationToken.None);
+            if (syncDecision == LaunchSyncDecision.NeedsChoice)
+            {
+                var choice = await _cloudSyncPrompt.ChooseAsync(_cloudSyncCoordinator.State, CancellationToken.None);
+                await _cloudSyncCoordinator.ResolveAsync(choice, CancellationToken.None);
+            }
             DolphinLaunchHelper.KillDolphin();
             if (WiiMoteSettings.IsForceSettingsEnabled())
                 WiiMoteSettings.DisableVirtualWiiMote();
@@ -60,19 +80,50 @@ public class RrLauncher : ILauncher
                 return modsLaunchResult.Error;
 
             RetroRewindLaunchHelper.GenerateLaunchJson();
+            var paths = _dolphinSavePathSource.TryResolve();
+            if (paths is not null)
+            {
+                await _cloudSyncCoordinator.SessionStartedAsync(CancellationToken.None);
+                sessionMarkerStarted = true;
+            }
             var dolphinLaunchType = _settingsManager.Get<bool>(_settingsManager.LAUNCH_WITH_DOLPHIN) ? "" : "-b";
             var dolphinLaunchResult = await DolphinLaunchHelper.LaunchDolphin(
                 $"{dolphinLaunchType} -e {EnvHelper.QuotePath(Path.GetFullPath(RrLaunchJsonFilePath))} --config=Dolphin.Core.EnableCheats=False --config=Achievements.Achievements.Enabled=False",
-                versionPreflightResult: preflightResult
+                versionPreflightResult: preflightResult,
+                processStarted: process =>
+                {
+                    if (paths is null) return;
+                    _dolphinSessionMonitor.Register(process, paths);
+                    _ = ObserveDolphinExitAsync(paths);
+                }
             );
             if (dolphinLaunchResult.IsFailure)
+            {
+                if (sessionMarkerStarted)
+                    await _cloudSyncCoordinator.SessionLaunchFailedAsync(CancellationToken.None);
                 return dolphinLaunchResult.Error;
+            }
 
             return Ok();
         }
         catch (Exception ex)
         {
+            if (sessionMarkerStarted)
+                await _cloudSyncCoordinator.SessionLaunchFailedAsync(CancellationToken.None);
             return new OperationError { Message = $"Failed to launch Retro Rewind: {ex.Message}", Exception = ex };
+        }
+    }
+
+    private async Task ObserveDolphinExitAsync(DolphinSavePaths paths)
+    {
+        try
+        {
+            await _dolphinSessionMonitor.WaitForExitAsync(paths, CancellationToken.None);
+            await _cloudSyncCoordinator.SessionEndedAsync(CancellationToken.None);
+        }
+        catch
+        {
+            // Keep the persisted pending-session marker; startup/focus reconciliation retries safely.
         }
     }
 

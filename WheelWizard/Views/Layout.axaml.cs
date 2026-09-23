@@ -5,7 +5,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Microsoft.Extensions.Logging;
 using WheelWizard.Branding;
+using WheelWizard.Features.CloudSync;
 using WheelWizard.Localization;
 using WheelWizard.Mods;
 using WheelWizard.Services.LiveData;
@@ -56,6 +58,15 @@ public partial class Layout : BaseWindow, IRepeatedTaskListener
     private IBrandingSingletonService BrandingService { get; set; } = null!;
 
     [Inject]
+    private ICloudSyncCoordinator CloudSyncCoordinator { get; set; } = null!;
+
+    [Inject]
+    private IDolphinSessionMonitor DolphinSessionMonitor { get; set; } = null!;
+
+    [Inject]
+    private IDolphinSavePathSource DolphinSavePathSource { get; set; } = null!;
+
+    [Inject]
     private IGameLicenseSingletonService GameLicenseService { get; set; } = null!;
 
     [Inject]
@@ -70,6 +81,7 @@ public partial class Layout : BaseWindow, IRepeatedTaskListener
     public Layout()
     {
         Instance = this;
+        Activated += OnActivated;
         InitializeComponent();
         AddLayer();
 
@@ -112,11 +124,27 @@ public partial class Layout : BaseWindow, IRepeatedTaskListener
 
     protected override void OnClosed(EventArgs e)
     {
+        Activated -= OnActivated;
         _settingsSignalSubscription?.Dispose();
         _settingsSignalSubscription = null;
         LocalizationProvider.LanguageChanged -= OnLanguageChanged;
         ModManagerService.PropertyChanged -= ModManager_PropertyChanged;
         base.OnClosed(e);
+    }
+
+    private async void OnActivated(object? sender, EventArgs e)
+    {
+        try
+        {
+            var paths = DolphinSavePathSource.TryResolve();
+            if (paths is null) return;
+            var dolphinRunning = DolphinSessionMonitor.IsDolphinRunning(paths);
+            await CloudSyncCoordinator.ReconcileSessionAsync(dolphinRunning, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            App.Services.GetRequiredService<ILogger<Layout>>().LogError(exception, "Dolphin cloud-sync reconciliation failed on focus.");
+        }
     }
 
     private void OnLanguageChanged(object? sender, EventArgs e)

@@ -232,7 +232,8 @@ public static class DolphinLaunchHelper
     public static async Task<OperationResult> LaunchDolphin(
         string arguments = "",
         bool shellExecute = false,
-        OperationResult? versionPreflightResult = null
+        OperationResult? versionPreflightResult = null,
+        Action<Process>? processStarted = null
     )
     {
         versionPreflightResult ??= await PreflightDolphinVersionAsync();
@@ -286,7 +287,8 @@ public static class DolphinLaunchHelper
                 startInfo.UseShellExecute = false;
             }
 
-            Process.Start(startInfo);
+            var started = Process.Start(startInfo) ?? throw new InvalidOperationException("Dolphin did not start");
+            processStarted?.Invoke(started);
             return Ok();
         }
         catch (Exception ex)

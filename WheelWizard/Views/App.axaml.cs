@@ -4,6 +4,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.Logging;
 using WheelWizard.AutoUpdating;
+using WheelWizard.Features.CloudSync;
 using WheelWizard.MiiRendering.Services;
 using WheelWizard.Mods;
 using WheelWizard.Services;
@@ -152,6 +153,13 @@ public class App : Application
             InitializeManagers();
 
             var settingsManager = Services.GetRequiredService<ISettingsManager>();
+            var paths = Services.GetRequiredService<IDolphinSavePathSource>().TryResolve();
+            if (paths is not null)
+            {
+                var dolphinRunning = Services.GetRequiredService<IDolphinSessionMonitor>().IsDolphinRunning(paths);
+                await Services.GetRequiredService<ICloudSyncCoordinator>().ReconcileSessionAsync(dolphinRunning, CancellationToken.None);
+            }
+
             var requestedByCli = GetStartupLaunchTarget() == StartupLaunchTarget.RetroRewind;
             var shouldLaunchRrOnStartup = !launchedFromProtocol && settingsManager.Get<bool>(settingsManager.LAUNCH_RR_ON_STARTUP);
             if (requestedByCli || shouldLaunchRrOnStartup)

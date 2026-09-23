@@ -403,6 +403,49 @@ public sealed class CloudSyncCoordinatorTests
         await fixture.Api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Launch_failure_clears_pending_marker_without_post_exit_sync()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+
+        await fixture.Coordinator.SessionStartedAsync(CancellationToken.None);
+        await fixture.Coordinator.SessionLaunchFailedAsync(CancellationToken.None);
+
+        fixture.StateStore.Received().Update(Arg.Is<SyncState>(state => !state.SessionPending));
+        await fixture.Api.DidNotReceive().GetSaveMetadataAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Startup_reconciliation_keeps_pending_session_when_dolphin_is_live()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        fixture.StateStore.ReadFor("account", fixture.Paths).Returns(new SyncState("device", "account", fixture.Paths.UserFolder, fixture.Paths.SaveRoot, fixture.Paths.WiiRoot, "r1", "old-local", true, null));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.ReconcileSessionAsync(dolphinConfirmedRunning: true, CancellationToken.None);
+
+        Assert.Equal(SyncUiStatus.QueuedForExit, fixture.Coordinator.State.Status);
+        fixture.StateStore.DidNotReceive().Update(Arg.Is<SyncState>(state => !state.SessionPending));
+        await fixture.Api.DidNotReceive().GetSaveMetadataAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Startup_reconciliation_clears_pending_only_after_dolphin_confirmed_absent()
+    {
+        var fixture = CreateFixture("r1", "old-local");
+        fixture.StateStore.ReadFor("account", fixture.Paths).Returns(new SyncState("device", "account", fixture.Paths.UserFolder, fixture.Paths.SaveRoot, fixture.Paths.WiiRoot, "r1", "old-local", true, null));
+        fixture.Api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(new CloudSaveMetadata("r1", DateTimeOffset.UtcNow)));
+        fixture.Writer.CreateAsync(fixture.Paths, Arg.Any<CancellationToken>()).Returns(_ => Task.FromResult<ArchiveSnapshot?>(Snapshot("old-local")));
+
+        await fixture.Coordinator.ConnectAsync(CancellationToken.None);
+        await fixture.Coordinator.ReconcileSessionAsync(dolphinConfirmedRunning: false, CancellationToken.None);
+
+        fixture.StateStore.Received().Update(Arg.Is<SyncState>(state => !state.SessionPending));
+        await fixture.Api.Received(1).GetSaveMetadataAsync(Arg.Any<CancellationToken>());
+        Assert.Equal(SyncUiStatus.Idle, fixture.Coordinator.State.Status);
+    }
+
     private static ArchiveSnapshot Snapshot(string hash)
     {
         var path = Path.GetTempFileName();
