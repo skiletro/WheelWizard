@@ -63,6 +63,8 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
     private bool _sessionActive;
     private bool _manualSyncQueued;
     private ConflictChoice? _deferredChoice;
+    private DropboxSyncLock? _ownedLock;
+    private string? _lockOwnerAccount;
 
     public CloudSyncCoordinator(IDropboxOAuthService oauth, IDropboxSyncApi dropbox, IDolphinSavePathSource paths,
         ICloudSyncStateStore stateStore, IWheelSyncArchiveWriter writer, IWheelSyncArchiveReader reader,
@@ -90,6 +92,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         {
             Publish(SyncUiStatus.Busy, "Connecting to Dropbox.");
             var identity = await _oauth.ConnectAsync(ct).ConfigureAwait(false);
+            if (!string.Equals(_accountId, identity.AccountId, StringComparison.Ordinal)) ClearLockOwnership();
             _accountId = identity.AccountId;
             _email = identity.Email;
             _resolvedPaths = _paths.TryResolve();
@@ -114,6 +117,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            ClearLockOwnership();
             _accountId = null;
             _email = null;
             _baseline = null;
@@ -186,9 +190,24 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
             {
                 _baseline = _baseline with { SessionPending = true };
                 _stateStore.Update(_baseline);
-                if (_settings.Get<bool>(_settings.CLOUD_AUTO_SYNC))
+                if (_accountId is not null && _settings.Get<bool>(_settings.CLOUD_AUTO_SYNC))
                 {
-                    try { await _dropbox.WriteLockAsync(new DropboxSyncLock(_baseline.DeviceId, DateTimeOffset.UtcNow), ct).ConfigureAwait(false); } catch { }
+                    try
+                    {
+                        var existingLock = await _dropbox.ReadLockAsync(ct).ConfigureAwait(false);
+                        if (existingLock is null || !IsFreshLock(existingLock))
+                        {
+                            var startedAt = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                            var candidate = new DropboxSyncLock(_baseline.DeviceId, startedAt);
+                            if (await _dropbox.WriteLockAsync(candidate, ct).ConfigureAwait(false))
+                            {
+                                _ownedLock = candidate;
+                                _lockOwnerAccount = _accountId;
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                    catch (Exception) { ClearLockOwnership(); }
                 }
             }
         }
@@ -213,10 +232,18 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
             return;
         }
 
+        var endPendingSession = false;
         await _gate.WaitAsync(ct).ConfigureAwait(false);
-        try { RefreshResolvedPaths(); }
+        try
+        {
+            RefreshResolvedPaths();
+            endPendingSession = _sessionActive || _baseline?.SessionPending == true;
+        }
         finally { _gate.Release(); }
-        await EndSessionAsync(syncAfter: true, ct).ConfigureAwait(false);
+        if (endPendingSession)
+            await EndSessionAsync(syncAfter: true, ct).ConfigureAwait(false);
+        else
+            await AutoSyncAsync(ct).ConfigureAwait(false);
     }
 
     public async Task ResolveAsync(ConflictChoice choice, CancellationToken ct)
@@ -263,6 +290,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         {
             await _oauth.DisconnectAsync(ct).ConfigureAwait(false);
             _stateStore.ClearAccount();
+            ClearLockOwnership();
             _accountId = null;
             _email = null;
             _baseline = null;
@@ -492,11 +520,21 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
             {
                 _baseline = _baseline with { SessionPending = false };
                 _stateStore.Update(_baseline);
-                if (_accountId is not null && _settings.Get<bool>(_settings.CLOUD_AUTO_SYNC))
+                if (_accountId is not null && _settings.Get<bool>(_settings.CLOUD_AUTO_SYNC)
+                    && _ownedLock is { } ownedLock
+                    && string.Equals(_lockOwnerAccount, _accountId, StringComparison.Ordinal))
                 {
-                    try { await _dropbox.DeleteLockAsync(ct).ConfigureAwait(false); } catch { }
+                    try
+                    {
+                        var currentLock = await _dropbox.ReadLockAsync(ct).ConfigureAwait(false);
+                        if (currentLock is not null && MatchesOwnedLock(currentLock, ownedLock, _baseline.DeviceId))
+                            await _dropbox.DeleteLockAsync(ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                    catch (Exception) { }
                 }
             }
+            ClearLockOwnership();
             deferredChoice = _deferredChoice;
             _deferredChoice = null;
             manualSyncQueued = _manualSyncQueued;
@@ -521,6 +559,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         if (_resolvedPaths is not null && SameRoots(_resolvedPaths, currentPaths))
             return;
 
+        ClearLockOwnership();
         _resolvedPaths = currentPaths;
         if (_accountId is not null)
             _baseline = _stateStore.ReadFor(_accountId, currentPaths);
@@ -558,7 +597,21 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
     private static bool IsFreshForeignLock(DropboxSyncLock? cloudLock, string deviceId)
     {
         if (cloudLock is null || string.Equals(cloudLock.DeviceId, deviceId, StringComparison.Ordinal)) return false;
-        return DateTimeOffset.UtcNow - cloudLock.ServerModified <= TimeSpan.FromHours(2);
+        return IsFreshLock(cloudLock);
+    }
+
+    private static bool IsFreshLock(DropboxSyncLock cloudLock) =>
+        DateTimeOffset.UtcNow - cloudLock.ServerModified <= TimeSpan.FromHours(2);
+
+    private static bool MatchesOwnedLock(DropboxSyncLock current, DropboxSyncLock owned, string deviceId) =>
+        string.Equals(current.DeviceId, deviceId, StringComparison.Ordinal)
+        && string.Equals(current.DeviceId, owned.DeviceId, StringComparison.Ordinal)
+        && current.StartedAt == owned.StartedAt;
+
+    private void ClearLockOwnership()
+    {
+        _ownedLock = null;
+        _lockOwnerAccount = null;
     }
 
     private static bool IsReconnectRequired(Exception exception) =>

@@ -131,7 +131,7 @@ public class DropboxSyncApiTests
         var writeHandler = new QueueHandler(Response(HttpStatusCode.OK, "{}"), Response(HttpStatusCode.OK, "{}"));
         var writeApi = CreateApi(writeHandler);
 
-        await writeApi.WriteLockAsync(new DropboxSyncLock("device-1", lockStartedAt), CancellationToken.None);
+        Assert.True(await writeApi.WriteLockAsync(new DropboxSyncLock("device-1", lockStartedAt), CancellationToken.None));
         await writeApi.WriteStateAsync(new DropboxSyncState("device-1", syncedAt, "hash"), CancellationToken.None);
 
         using var lockJson = System.Text.Json.JsonDocument.Parse(writeHandler.Bodies[0]);
@@ -157,6 +157,14 @@ public class DropboxSyncApiTests
         Assert.Equal(lockStartedAt, cloudLock.StartedAt);
         Assert.Equal(lockServerModified, cloudLock.ServerModified);
         Assert.Equal(new DropboxSyncState("device-1", syncedAt, "hash"), cloudState);
+    }
+
+    [Fact]
+    public async Task Lock_write_failure_is_reported_as_not_owned()
+    {
+        var api = CreateApi(new QueueHandler(Response(HttpStatusCode.InternalServerError, "{}")));
+
+        Assert.False(await api.WriteLockAsync(new DropboxSyncLock("device-1", DateTimeOffset.UtcNow), CancellationToken.None));
     }
 
     [Fact]

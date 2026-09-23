@@ -20,7 +20,7 @@ public interface IDropboxSyncApi
     Task<CloudSaveMetadata> DownloadAsync(string rev, string destination, CancellationToken ct);
     Task<CloudSaveMetadata> UploadAsync(string source, string? expectedRev, CancellationToken ct);
     Task<DropboxSyncLock?> ReadLockAsync(CancellationToken ct);
-    Task WriteLockAsync(DropboxSyncLock cloudLock, CancellationToken ct);
+    Task<bool> WriteLockAsync(DropboxSyncLock cloudLock, CancellationToken ct);
     Task DeleteLockAsync(CancellationToken ct);
     Task<DropboxSyncState?> ReadStateAsync(CancellationToken ct);
     Task WriteStateAsync(DropboxSyncState state, CancellationToken ct);
@@ -110,11 +110,15 @@ public sealed class DropboxSyncApi : IDropboxSyncApi
     public Task<DropboxSyncLock?> ReadLockAsync(CancellationToken ct) => ReadLockAsyncCore(ct);
     public Task<DropboxSyncState?> ReadStateAsync(CancellationToken ct) => ReadStateAsyncCore(ct);
 
-    public async Task WriteLockAsync(DropboxSyncLock cloudLock, CancellationToken ct)
+    public async Task<bool> WriteLockAsync(DropboxSyncLock cloudLock, CancellationToken ct)
     {
-        try { await UploadJsonAsync("/lock.json", cloudLock, ct).ConfigureAwait(false); }
+        try
+        {
+            await UploadJsonAsync("/lock.json", cloudLock, ct).ConfigureAwait(false);
+            return true;
+        }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (Exception) { }
+        catch (Exception) { return false; }
     }
 
     public async Task DeleteLockAsync(CancellationToken ct)
