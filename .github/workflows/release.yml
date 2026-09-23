@@ -28,7 +28,7 @@ jobs:
         run: dotnet restore WheelWizard.sln
 
       - name: Run tests
-        run: dotnet test WheelWizard.sln --configuration Release --no-restore --verbosity normal
+        run: dotnet test WheelWizard.sln --configuration Release --no-restore --verbosity normal -p:CSharpier_Bypass=true
 
       - name: Publish Windows x64
         run: >
@@ -42,6 +42,7 @@ jobs:
           /p:IncludeNativeLibrariesForSelfExtract=true
           /p:EnableCompressionInSingleFile=true
           /p:WheelSyncDropboxAppKey="${{ vars.WHEELSYNC_DROPBOX_APP_KEY }}"
+          -p:CSharpier_Bypass=true
 
       - name: Publish Linux x64
         run: >
@@ -55,6 +56,7 @@ jobs:
           /p:IncludeNativeLibrariesForSelfExtract=true
           /p:EnableCompressionInSingleFile=true
           /p:WheelSyncDropboxAppKey="${{ vars.WHEELSYNC_DROPBOX_APP_KEY }}"
+          -p:CSharpier_Bypass=true
 
       - name: Publish Linux ARM64
         run: >
@@ -68,6 +70,7 @@ jobs:
           /p:IncludeNativeLibrariesForSelfExtract=true
           /p:EnableCompressionInSingleFile=true
           /p:WheelSyncDropboxAppKey="${{ vars.WHEELSYNC_DROPBOX_APP_KEY }}"
+          -p:CSharpier_Bypass=true
 
       - name: Stage release assets
         run: |

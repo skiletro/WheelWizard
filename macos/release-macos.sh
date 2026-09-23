@@ -66,6 +66,7 @@ if [ "${SKIP_BUILD:-}" != "true" ]; then
         /p:PublishReadyToRun=true \
         -p:UseAppHost=true \
         -p:WheelSyncDropboxAppKey="${WHEELSYNC_DROPBOX_APP_KEY:-}" \
+        -p:CSharpier_Bypass=true \
         --self-contained true \
         -o "$OUTPUT_DIR/compiled/$RID"
 else
