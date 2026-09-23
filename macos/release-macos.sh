@@ -65,6 +65,7 @@ if [ "${SKIP_BUILD:-}" != "true" ]; then
         /p:EnableCompressionInSingleFile=true \
         /p:PublishReadyToRun=true \
         -p:UseAppHost=true \
+        -p:WheelSyncDropboxAppKey="${WHEELSYNC_DROPBOX_APP_KEY:-}" \
         --self-contained true \
         -o "$OUTPUT_DIR/compiled/$RID"
 else

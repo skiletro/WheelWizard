@@ -67,6 +67,13 @@
         <PackageReference Include="YamlDotNet" Version="17.1.0" />
     </ItemGroup>
 
+    <ItemGroup>
+        <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+            <_Parameter1>WheelSyncDropboxAppKey</_Parameter1>
+            <_Parameter2>$(WheelSyncDropboxAppKey)</_Parameter2>
+        </AssemblyAttribute>
+    </ItemGroup>
+
     <ItemGroup Label="Embedded Resources">
         <EmbeddedResource Include="Resources\Languages\*.yml" />
 

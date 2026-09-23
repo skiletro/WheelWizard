@@ -41,6 +41,7 @@ jobs:
           /p:PublishSingleFile=true
           /p:IncludeNativeLibrariesForSelfExtract=true
           /p:EnableCompressionInSingleFile=true
+          /p:WheelSyncDropboxAppKey="${{ vars.WHEELSYNC_DROPBOX_APP_KEY }}"
 
       - name: Publish Linux x64
         run: >
@@ -53,6 +54,7 @@ jobs:
           /p:PublishSingleFile=true
           /p:IncludeNativeLibrariesForSelfExtract=true
           /p:EnableCompressionInSingleFile=true
+          /p:WheelSyncDropboxAppKey="${{ vars.WHEELSYNC_DROPBOX_APP_KEY }}"
 
       - name: Publish Linux ARM64
         run: >
@@ -65,6 +67,7 @@ jobs:
           /p:PublishSingleFile=true
           /p:IncludeNativeLibrariesForSelfExtract=true
           /p:EnableCompressionInSingleFile=true
+          /p:WheelSyncDropboxAppKey="${{ vars.WHEELSYNC_DROPBOX_APP_KEY }}"
 
       - name: Stage release assets
         run: |
@@ -105,6 +108,7 @@ jobs:
           ./macos/release-macos.sh
         env:
           BUILD_ARCH: arm64
+          WHEELSYNC_DROPBOX_APP_KEY: ${{ vars.WHEELSYNC_DROPBOX_APP_KEY }}
 
       - name: Import signing certificate
         env:
@@ -228,6 +232,7 @@ jobs:
           ./macos/release-macos.sh
         env:
           BUILD_ARCH: x64
+          WHEELSYNC_DROPBOX_APP_KEY: ${{ vars.WHEELSYNC_DROPBOX_APP_KEY }}
 
       - name: Import signing certificate
         env:

@@ -65,7 +65,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
 
     public CloudSyncCoordinator(IDropboxOAuthService oauth, IDropboxSyncApi dropbox, IDolphinSavePathSource paths,
         ICloudSyncStateStore stateStore, IWheelSyncArchiveWriter writer, IWheelSyncArchiveReader reader,
-        ISaveRestoreService restore, ICloudSyncPrompt prompt, ISettingsManager settings)
+        ISaveRestoreService restore, ICloudSyncPrompt prompt, ISettingsManager settings, bool configured = true)
     {
         _oauth = oauth;
         _dropbox = dropbox;
@@ -76,7 +76,7 @@ public sealed class CloudSyncCoordinator : ICloudSyncCoordinator
         _restore = restore;
         _prompt = prompt;
         _settings = settings;
-        State = new SyncUiState(SyncUiStatus.NotConfigured);
+        State = new SyncUiState(configured ? SyncUiStatus.Disconnected : SyncUiStatus.NotConfigured);
     }
 
     public SyncUiState State { get; private set; }

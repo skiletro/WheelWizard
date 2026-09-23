@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:loc="clr-namespace:WheelWizard.Localization"
+             x:Class="WheelWizard.Views.Pages.Settings.CloudSyncSettings"
+             x:CompileBindings="False">
+    <Border Margin="0,8,0,0" Padding="12" CornerRadius="8" Background="{StaticResource Neutral700}">
+        <StackPanel Spacing="8">
+            <TextBlock Classes="BodyText" Text="{loc:T title.cloud_sync_settings}" />
+            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding AvailabilityText}" TextWrapping="Wrap" Opacity="0.8" />
+            <TextBlock Text="{loc:T label.cloud_sync_account}" />
+            <TextBlock Text="{Binding AccountText}" />
+            <TextBlock Text="{loc:T label.cloud_sync_last_sync}" />
+            <TextBlock Text="{Binding LastSyncText}" />
+            <CheckBox x:Name="AutoSyncToggle" Classes="SwitchDark"
+                      Content="{loc:T option.cloud_auto_sync}"
+                      IsChecked="{Binding AutoSyncEnabled}" IsEnabled="{Binding CanToggleAutoSync}"
+                      IsCheckedChanged="AutoSync_OnChanged" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="ConnectButton" Content="{loc:T action.cloud_sync_connect}"
+                        IsEnabled="{Binding CanConnect}" Click="Connect_OnClick" />
+                <Button Content="{loc:T action.cloud_sync_disconnect}"
+                        IsEnabled="{Binding CanDisconnect}" Click="Disconnect_OnClick" />
+                <Button Content="{loc:T action.cloud_sync_now}"
+                        IsEnabled="{Binding CanSync}" Click="SyncNow_OnClick" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</UserControl>

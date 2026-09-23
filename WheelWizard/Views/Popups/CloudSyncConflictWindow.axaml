@@ -1,0 +1,16 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="clr-namespace:WheelWizard.Localization"
+        x:Class="WheelWizard.Views.Popups.CloudSyncConflictWindow"
+        Width="460" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Title="Cloud save choice">
+    <StackPanel Margin="24" Spacing="12">
+        <TextBlock x:Name="TitleText" FontSize="20" FontWeight="Bold" />
+        <TextBlock x:Name="MessageText" TextWrapping="Wrap" />
+        <TextBlock Text="{loc:T helper_text.cloud_sync_overlay_limit}" TextWrapping="Wrap" />
+        <Button x:Name="UseCloudButton" Click="UseCloud_Click" />
+        <Button x:Name="KeepLocalButton" Click="KeepLocal_Click" />
+        <Button x:Name="PlayWithoutSyncingButton" Click="PlayWithoutSyncing_Click" />
+    </StackPanel>
+</Window>

@@ -38,9 +38,9 @@ public static class SetupExtensions
         services.AddDolphinInstaller();
         services.AddLocalization();
         services.AddSettings();
+        services.AddCloudSync();
         services.AddSingleton<IDolphinProcessProbe, SystemDolphinProcessProbe>();
         services.AddSingleton<IDolphinSessionMonitor, DolphinSessionMonitor>();
-        services.AddSingleton<IDolphinSavePathSource, PathManagerDolphinSavePathSource>();
         services.AddCustomCharacters();
         services.AddAutoUpdating();
         services.AddBranding();

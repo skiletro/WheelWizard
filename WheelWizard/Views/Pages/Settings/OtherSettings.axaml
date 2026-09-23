@@ -5,6 +5,7 @@
              mc:Ignorable="d" d:DesignWidth="444" d:DesignHeight="831"
              xmlns:loc="clr-namespace:WheelWizard.Localization"
              xmlns:components1="clr-namespace:WheelWizard.Views.Components"
+             xmlns:pagesettings="clr-namespace:WheelWizard.Views.Pages.Settings"
              x:Class="WheelWizard.Views.Pages.Settings.OtherSettings">
 
     <Grid x:Name="DolphinBorder">
@@ -128,6 +129,7 @@
                                             Click="OpenSaveFolder_OnClick" />
                     </Grid>
                 </Border>
+                <pagesettings:CloudSyncSettings />
             </StackPanel>
 
             <components1:FormFieldLabel x:Name="RecompSectionLabel"
