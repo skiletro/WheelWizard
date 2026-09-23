@@ -82,6 +82,67 @@ public class WheelSyncArchiveWriterTests
         Assert.Null(snapshot);
     }
 
+    [Fact]
+    public async Task CreateAsync_RejectsEntryLimitAndDeletesPartialArchive()
+    {
+        using var root = new TemporaryDirectory();
+        var wii = Path.Combine(root.Path, "Wii");
+        AddFile(wii, "shared2/Pulsar/RetroRewind6/Ghosts/large.ghost", new byte[5]);
+        var tempDirectory = Path.Combine(WheelWizard.Services.PathManager.WheelWizardAppdataPath, "cloud-sync", "tmp");
+        var before = Directory.Exists(tempDirectory) ? Directory.GetFiles(tempDirectory).ToHashSet() : [];
+        var writer = new WheelSyncArchiveWriter(new ArchiveSafetyLimits(MaximumEntries: 10, MaximumEntryBytes: 4, MaximumTotalBytes: 1000));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => writer.CreateAsync(
+            new DolphinSavePaths(root.Path, Path.Combine(root.Path, "save"), wii, null), CancellationToken.None));
+
+        AssertNoNewTemporaryArchives(tempDirectory, before);
+    }
+
+    [Fact]
+    public async Task CreateAsync_RejectsEntryCountAndAggregateLimits()
+    {
+        using var root = new TemporaryDirectory();
+        var wii = Path.Combine(root.Path, "Wii");
+        AddFile(wii, "shared2/Pulsar/RetroRewind6/Ghosts/one.ghost", new byte[900]);
+        AddFile(wii, "shared2/Pulsar/RetroRewind6/Ghosts/two.ghost", [1]);
+        var paths = new DolphinSavePaths(root.Path, Path.Combine(root.Path, "save"), wii, null);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => new WheelSyncArchiveWriter(
+            new ArchiveSafetyLimits(MaximumEntries: 2, MaximumEntryBytes: 1000, MaximumTotalBytes: 2000)).CreateAsync(paths, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidDataException>(() => new WheelSyncArchiveWriter(
+            new ArchiveSafetyLimits(MaximumEntries: 10, MaximumEntryBytes: 1000, MaximumTotalBytes: 1000)).CreateAsync(paths, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CreateAsync_EnforcesLimitsOnBytesPresentWhenCopyStarts()
+    {
+        using var root = new TemporaryDirectory();
+        var wii = Path.Combine(root.Path, "Wii");
+        var ghost = Path.Combine(wii, "shared2/Pulsar/RetroRewind6/Ghosts/changed.ghost");
+        AddFile(wii, "shared2/Pulsar/RetroRewind6/Ghosts/changed.ghost", [1]);
+        var writer = new WheelSyncArchiveWriter(
+            new ArchiveSafetyLimits(MaximumEntries: 10, MaximumEntryBytes: 4, MaximumTotalBytes: 1000),
+            sourceOpener: path =>
+            {
+                File.WriteAllBytes(path, new byte[5]);
+                return File.OpenRead(path);
+            });
+        var tempDirectory = Path.Combine(WheelWizard.Services.PathManager.WheelWizardAppdataPath, "cloud-sync", "tmp");
+        var before = Directory.Exists(tempDirectory) ? Directory.GetFiles(tempDirectory).ToHashSet() : [];
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => writer.CreateAsync(
+            new DolphinSavePaths(root.Path, Path.Combine(root.Path, "save"), wii, null), CancellationToken.None));
+
+        AssertNoNewTemporaryArchives(tempDirectory, before);
+        Assert.True(File.Exists(ghost));
+    }
+
+    private static void AssertNoNewTemporaryArchives(string directory, HashSet<string> before)
+    {
+        var after = Directory.Exists(directory) ? Directory.GetFiles(directory).ToHashSet() : [];
+        Assert.Equal(before, after);
+    }
+
     private static void AddFile(string root, string relative, byte[] bytes)
     {
         var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));

@@ -119,6 +119,36 @@ public sealed class CloudSyncCoordinatorTests
     }
 
     [Fact]
+    public async Task Oversized_local_archive_fails_before_upload_or_baseline_update()
+    {
+        using var directory = new WheelSyncArchiveReaderTests.TemporaryDirectory();
+        var paths = new DolphinSavePaths(directory.Path, Path.Combine(directory.Path, "RetroWFC"), Path.Combine(directory.Path, "Wii"), "1");
+        var ghost = Path.Combine(paths.WiiRoot, "shared2", "Pulsar", "RetroRewind6", "Ghosts", "oversized.ghost");
+        Directory.CreateDirectory(Path.GetDirectoryName(ghost)!);
+        await File.WriteAllBytesAsync(ghost, new byte[5]);
+        var oauth = Substitute.For<IDropboxOAuthService>();
+        oauth.ConnectAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(("account", "user@example.com")));
+        var api = Substitute.For<IDropboxSyncApi>();
+        api.GetSaveMetadataAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<CloudSaveMetadata?>(null));
+        var source = Substitute.For<IDolphinSavePathSource>();
+        source.TryResolve().Returns(paths);
+        var state = new SyncState("device", "account", paths.UserFolder, paths.SaveRoot, paths.WiiRoot, null, null, false, null);
+        var store = Substitute.For<ICloudSyncStateStore>();
+        store.ReadFor("account", paths).Returns(state);
+        var settings = Substitute.For<ISettingsManager>();
+        settings.Get<bool>(settings.CLOUD_AUTO_SYNC).Returns(true);
+        var writer = new WheelSyncArchiveWriter(new ArchiveSafetyLimits(MaximumEntries: 10, MaximumEntryBytes: 4, MaximumTotalBytes: 1024));
+        var coordinator = new CloudSyncCoordinator(oauth, api, source, store, writer, Substitute.For<IWheelSyncArchiveReader>(),
+            Substitute.For<ISaveRestoreService>(), Substitute.For<ICloudSyncPrompt>(), settings);
+
+        await coordinator.ConnectAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidDataException>(() => coordinator.SyncNowAsync(CancellationToken.None));
+
+        await api.DidNotReceive().UploadAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        store.DidNotReceive().Update(Arg.Is<SyncState>(updated => updated.Rev != null || updated.LocalHash != null));
+    }
+
+    [Fact]
     public async Task Both_changed_waits_for_choice_without_uploading()
     {
         var oauth = Substitute.For<IDropboxOAuthService>();

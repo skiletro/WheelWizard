@@ -16,6 +16,16 @@ public sealed class WheelSyncArchiveWriter : IWheelSyncArchiveWriter
     private static readonly string[] Regions = ["RMCP", "RMCE", "RMCJ", "RMCK"];
     private static readonly string[] PulsarFiles = ["RRRating.pul", "RRGameSettings.pul", "RRSettings.pul"];
     private const string PulsarRoot = "shared2/Pulsar/RetroRewind6";
+    private readonly ArchiveSafetyLimits _limits;
+    private readonly Func<string, Stream> _sourceOpener;
+
+    public WheelSyncArchiveWriter(ArchiveSafetyLimits? limits = null, Func<string, Stream>? sourceOpener = null)
+    {
+        _limits = limits ?? new ArchiveSafetyLimits();
+        if (_limits.MaximumEntries < 1 || _limits.MaximumEntryBytes < 0 || _limits.MaximumTotalBytes < 0)
+            throw new ArgumentOutOfRangeException(nameof(limits));
+        _sourceOpener = sourceOpener ?? (path => new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true));
+    }
 
     public async Task<ArchiveSnapshot?> CreateAsync(DolphinSavePaths paths, CancellationToken ct)
     {
@@ -59,6 +69,8 @@ public sealed class WheelSyncArchiveWriter : IWheelSyncArchiveWriter
 
         if (included.Count == 0)
             return null;
+        if (included.Count + 1 > _limits.MaximumEntries)
+            throw new InvalidDataException("Save archive has too many entries");
 
         var directory = Path.Combine(PathManager.WheelWizardAppdataPath, "cloud-sync", "tmp");
         Directory.CreateDirectory(directory);
@@ -90,32 +102,39 @@ public sealed class WheelSyncArchiveWriter : IWheelSyncArchiveWriter
                         },
                         rrVersion = paths.InstalledRrVersion,
                     };
+                    var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(
+                        manifest,
+                        new JsonSerializerOptions
+                        {
+                            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+                        }
+                    );
+                    if (manifestBytes.LongLength > _limits.MaximumEntryBytes || manifestBytes.LongLength > _limits.MaximumTotalBytes)
+                        throw new InvalidDataException("Save archive manifest exceeds safety limits");
+                    long totalBytes = manifestBytes.LongLength;
                     var manifestEntry = archive.CreateEntry("manifest.json", CompressionLevel.Optimal);
                     await using (var manifestStream = manifestEntry.Open())
-                        await JsonSerializer.SerializeAsync(
-                            manifestStream,
-                            manifest,
-                            new JsonSerializerOptions
-                            {
-                                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-                            },
-                            ct
-                        );
+                        await manifestStream.WriteAsync(manifestBytes, ct);
 
                     foreach (var item in included)
                     {
                         ct.ThrowIfCancellationRequested();
                         var entry = archive.CreateEntry(item.ArchiveName, CompressionLevel.Optimal);
                         await using var entryOutput = entry.Open();
-                        await using var source = new FileStream(
-                            item.SourcePath,
-                            FileMode.Open,
-                            FileAccess.Read,
-                            FileShare.Read,
-                            81920,
-                            useAsync: true
-                        );
-                        await source.CopyToAsync(entryOutput, ct);
+                        await using var source = _sourceOpener(item.SourcePath);
+                        var buffer = new byte[81920];
+                        long entryBytes = 0;
+                        int read;
+                        while ((read = await source.ReadAsync(buffer, ct)) != 0)
+                        {
+                            entryBytes = checked(entryBytes + read);
+                            totalBytes = checked(totalBytes + read);
+                            if (entryBytes > _limits.MaximumEntryBytes)
+                                throw new InvalidDataException("Save archive entry is too large");
+                            if (totalBytes > _limits.MaximumTotalBytes)
+                                throw new InvalidDataException("Save archive is too large");
+                            await entryOutput.WriteAsync(buffer.AsMemory(0, read), ct);
+                        }
                     }
                 }
 
