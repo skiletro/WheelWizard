@@ -67,6 +67,12 @@
         <PackageReference Include="YamlDotNet" Version="17.1.0" />
     </ItemGroup>
 
+    <PropertyGroup>
+        <!-- Public Wheel Witch-shared Dropbox app key (not a secret). Local/dev builds embed this
+             default; CI release builds override it via /p:WheelSyncDropboxAppKey from repo vars. -->
+        <WheelSyncDropboxAppKey Condition="'$(WheelSyncDropboxAppKey)' == ''">42eh8jvnnx5vqnd</WheelSyncDropboxAppKey>
+    </PropertyGroup>
+
     <ItemGroup>
         <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
             <_Parameter1>WheelSyncDropboxAppKey</_Parameter1>
