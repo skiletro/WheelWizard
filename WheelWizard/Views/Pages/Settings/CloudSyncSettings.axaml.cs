@@ -1,5 +1,5 @@
-using Avalonia.Interactivity;
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 using WheelWizard.Features.CloudSync;
 using WheelWizard.Localization;
 using WheelWizard.Settings;
@@ -10,13 +10,23 @@ namespace WheelWizard.Views.Pages.Settings;
 
 public partial class CloudSyncSettings : UserControlBase
 {
-    [Inject] private ICloudSyncCoordinator Coordinator { get; set; } = null!;
-    [Inject] private ICloudSyncPrompt Prompt { get; set; } = null!;
-    [Inject] private IDolphinSavePathSource Paths { get; set; } = null!;
-    [Inject] private ISettingsManager Settings { get; set; } = null!;
-    [Inject] private ILocalizationService Localization { get; set; } = null!;
+    [Inject]
+    private ICloudSyncCoordinator Coordinator { get; set; } = null!;
+
+    [Inject]
+    private ICloudSyncPrompt Prompt { get; set; } = null!;
+
+    [Inject]
+    private IDolphinSavePathSource Paths { get; set; } = null!;
+
+    [Inject]
+    private ISettingsManager Settings { get; set; } = null!;
+
+    [Inject]
+    private ILocalizationService Localization { get; set; } = null!;
 
     private CloudSyncSettingsViewModel? _viewModel;
+
     public CloudSyncSettings()
     {
         InitializeComponent();
@@ -33,9 +43,10 @@ public partial class CloudSyncSettings : UserControlBase
             Settings,
             Localization,
             Settings.DolphinPathsSetupCorrectly() && Paths.TryResolve() is not null,
-            OperatingSystem.IsWindows() || OperatingSystem.IsMacOS(),
+            OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() || ProtectedTokenStoreLinux.IsLikelyAvailable(),
             !string.IsNullOrWhiteSpace(CloudSyncBuildConfiguration.AppKey),
-            Prompt);
+            Prompt
+        );
         DataContext = _viewModel;
     }
 
