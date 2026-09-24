@@ -124,19 +124,21 @@ internal sealed class TmdsSecretServiceClient : ISecretServiceClient
         }
     }
 
-    /// <summary>Builds a method call message synchronously; the MessageWriter ref struct never crosses an await.</summary>
+    private delegate void MessageBodyWriter(ref MessageWriter writer);
+
+    /// <summary>Builds a method call message synchronously; the MessageWriter struct never crosses an await.</summary>
     private static MessageBuffer CreateMethodCall(
         DBusConnection connection,
         ObjectPath path,
         string interfaceName,
         string member,
         string signature,
-        Action<MessageWriter>? writeBody = null
+        MessageBodyWriter? writeBody = null
     )
     {
         var writer = connection.GetMessageWriter();
         writer.WriteMethodCallHeader(SecretsBusName, path, interfaceName, member, signature);
-        writeBody?.Invoke(writer);
+        writeBody?.Invoke(ref writer);
         var message = writer.CreateMessage();
         writer.Dispose();
         return message;
@@ -167,7 +169,7 @@ internal sealed class TmdsSecretServiceClient : ISecretServiceClient
             ServiceInterface,
             "OpenSession",
             "sv",
-            writer =>
+            (ref MessageWriter writer) =>
             {
                 writer.WriteString(PlainSessionAlgorithm);
                 writer.WriteVariantString(string.Empty);
@@ -196,7 +198,7 @@ internal sealed class TmdsSecretServiceClient : ISecretServiceClient
             ServiceInterface,
             "ReadAlias",
             "s",
-            writer => writer.WriteString(alias)
+            (ref MessageWriter writer) => writer.WriteString(alias)
         );
         return await CallMethodAsync(connection, message, static (reply, _) => reply.GetBodyReader().ReadObjectPath(), ct)
             .ConfigureAwait(false);
@@ -215,7 +217,7 @@ internal sealed class TmdsSecretServiceClient : ISecretServiceClient
 
     private async Task UnlockAsync(DBusConnection connection, ObjectPath[] paths, CancellationToken ct)
     {
-        var message = CreateMethodCall(connection, ServiceObjectPath, ServiceInterface, "Unlock", "ao", writer => writer.WriteArray(paths));
+        var message = CreateMethodCall(connection, ServiceObjectPath, ServiceInterface, "Unlock", "ao", (ref MessageWriter writer) => writer.WriteArray(paths));
         var prompt = await CallMethodAsync(
                 connection,
                 message,
@@ -245,7 +247,7 @@ internal sealed class TmdsSecretServiceClient : ISecretServiceClient
             ServiceInterface,
             "SearchItems",
             "a{ss}",
-            writer =>
+            (ref MessageWriter writer) =>
             {
                 var dictionaryStart = writer.WriteDictionaryStart();
                 foreach (var attribute in attributes)
@@ -290,7 +292,7 @@ internal sealed class TmdsSecretServiceClient : ISecretServiceClient
 
     private async Task<byte[]> GetItemSecretAsync(DBusConnection connection, ObjectPath item, CancellationToken ct)
     {
-        var message = CreateMethodCall(connection, item, ItemInterface, "GetSecret", "o", writer => writer.WriteObjectPath(_sessionPath));
+        var message = CreateMethodCall(connection, item, ItemInterface, "GetSecret", "o", (ref MessageWriter writer) => writer.WriteObjectPath(_sessionPath));
         return await CallMethodAsync(
                 connection,
                 message,
@@ -325,7 +327,7 @@ internal sealed class TmdsSecretServiceClient : ISecretServiceClient
             CollectionInterface,
             "CreateItem",
             "a{sv}(oayays)b",
-            writer =>
+            (ref MessageWriter writer) =>
             {
                 writer.WriteDictionary(
                     new KeyValuePair<string, VariantValue>[]
@@ -387,7 +389,7 @@ internal sealed class TmdsSecretServiceClient : ISecretServiceClient
 
         await CallMethodAsync(
                 connection,
-                CreateMethodCall(connection, prompt, PromptInterface, "Prompt", "s", writer => writer.WriteString(string.Empty)),
+                CreateMethodCall(connection, prompt, PromptInterface, "Prompt", "s", (ref MessageWriter writer) => writer.WriteString(string.Empty)),
                 ct
             )
             .ConfigureAwait(false);
