@@ -3,6 +3,8 @@ using Avalonia.Media;
 using Microsoft.Extensions.Caching.Memory;
 using WheelWizard.MiiImages;
 using WheelWizard.MiiImages.Domain;
+using WheelWizard.Settings;
+using WheelWizard.Shared.DependencyInjection;
 using WheelWizard.Utilities;
 using WheelWizard.WiiManagement.MiiManagement.Domain.Mii;
 
@@ -11,6 +13,10 @@ namespace WheelWizard.Views.Patterns;
 public partial class MiiImageLoader : BaseMiiImage
 {
     private static readonly bool IsAprilFirst = AprilFirstHelper.IsAprilFirstLocalOrBst();
+
+    [Inject]
+    private ISettingsManager SettingsService { get; set; } = null!;
+    private bool HighQualityMiiRenderEnabled => SettingsService.Get<bool>(SettingsService.HIGH_QUALITY_MII_RENDER);
 
     #region properties
 
@@ -90,7 +96,7 @@ public partial class MiiImageLoader : BaseMiiImage
     {
         List<MiiImageSpecifications> variants = [];
 
-        if (LowQualitySpeedup)
+        if (LowQualitySpeedup && !HighQualityMiiRenderEnabled)
         {
             if (GeneratedImages.Count > 0)
                 GeneratedImages[0] = null;
@@ -108,7 +114,7 @@ public partial class MiiImageLoader : BaseMiiImage
     {
         List<MiiImageSpecifications> variants = [];
 
-        if (LowQualitySpeedup)
+        if (LowQualitySpeedup && !HighQualityMiiRenderEnabled)
         {
             if (GeneratedImages.Count > 0)
                 GeneratedImages[0] = null;

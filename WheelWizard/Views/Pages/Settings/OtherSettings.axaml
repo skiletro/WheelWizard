@@ -33,6 +33,29 @@
                 </Border>
             </Grid>
 
+            <components1:FormFieldLabel Text="{loc:T section.wheel_wizard}" Margin="0,0,0,4" />
+            <Border Classes="SettingsBlockStyle SettingsRowStyle SettingsRowSingle">
+                <Grid ColumnDefinitions="*,Auto" MinHeight="40">
+                    <StackPanel Grid.Column="0"
+                                Margin="0,0,16,0"
+                                Spacing="3"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Center">
+                        <components1:FormFieldLabel Text="{loc:T option.high_quality_mii_render}" />
+                        <SelectableTextBlock Classes="TinyText"
+                                   Text="{loc:T helper_text.high_quality_mii_render}"
+                                   TextAlignment="Left"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                    <CheckBox Grid.Column="1"
+                              x:Name="HighQualityMiiRenderButton"
+                              Classes="SwitchDark"
+                              IsChecked="False"
+                              HorizontalAlignment="Right"
+                              VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+
             <components1:FormFieldLabel Text="{loc:T section.retro_rewind}" Margin="0,0,0,4" />
             <StackPanel Spacing="4" Margin="0,0,0,7">
                 <Border Classes="SettingsBlockStyle SettingsRowStyle SettingsRowTop">

@@ -9,6 +9,7 @@ using Avalonia.VisualTree;
 using WheelWizard.MiiImages;
 using WheelWizard.MiiImages.Domain;
 using WheelWizard.MiiRendering.Services;
+using WheelWizard.Settings;
 using WheelWizard.Shared.DependencyInjection;
 using WheelWizard.WiiManagement.MiiManagement.Domain.Mii;
 
@@ -28,6 +29,10 @@ public partial class Mii3DRender : BaseMiiImage
 
     [Inject]
     private IMiiNativeRenderer NativeRenderer { get; set; } = null!;
+
+    [Inject]
+    private ISettingsManager SettingsService { get; set; } = null!;
+    private bool HighQualityMiiRenderEnabled => SettingsService.Get<bool>(SettingsService.HIGH_QUALITY_MII_RENDER);
 
     private readonly object _renderLock = new();
     private PendingRender? _pendingRender;
@@ -181,7 +186,7 @@ public partial class Mii3DRender : BaseMiiImage
 
         _studioData = serialized.Value;
 
-        var shouldUsePreview = forcePreview || ShouldUsePreviewForModelChange();
+        var shouldUsePreview = !HighQualityMiiRenderEnabled && (forcePreview || ShouldUsePreviewForModelChange());
         if (shouldUsePreview)
         {
             QueueRenderCurrentView(renderScale: GetPreviewRenderScale());
@@ -418,7 +423,7 @@ public partial class Mii3DRender : BaseMiiImage
         _surfaceBitmap = null;
     }
 
-    private float GetPreviewRenderScale() => Math.Clamp(PreviewRenderScale, 0.05f, 1f);
+    private float GetPreviewRenderScale() => HighQualityMiiRenderEnabled ? 1f : Math.Clamp(PreviewRenderScale, 0.05f, 1f);
 
     private bool ShouldUsePreviewForModelChange()
     {
@@ -479,7 +484,8 @@ public partial class Mii3DRender : BaseMiiImage
         }
 
         QueueRenderCurrentView(renderScale: GetPreviewRenderScale());
-        ScheduleHighQualityRefresh();
+        if (!HighQualityMiiRenderEnabled)
+            ScheduleHighQualityRefresh();
     }
 
     private void ImageBorder_OnPointerReleased(object? sender, PointerReleasedEventArgs e)

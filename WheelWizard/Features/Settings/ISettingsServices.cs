@@ -55,6 +55,7 @@ public interface ISettingsProperties
     Setting VSYNC { get; }
     Setting INTERNAL_RESOLUTION { get; }
     Setting SHOW_FPS { get; }
+    Setting HIGH_QUALITY_MII_RENDER { get; }
     Setting GFX_BACKEND { get; }
     Setting MACADDRESS { get; }
     Setting WINDOW_SCALE { get; }

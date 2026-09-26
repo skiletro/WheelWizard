@@ -185,6 +185,7 @@ public class SettingsManager : ISettingsManager
         FOCUSED_USER = RegisterWhWz("FavoriteUser", 0, value => (int)(value ?? -1) >= 0 && (int)(value ?? -1) < 4);
 
         ENABLE_ANIMATIONS = RegisterWhWz("EnableAnimations", true);
+        HIGH_QUALITY_MII_RENDER = RegisterWhWz("HighQualityMiiRender", false);
         TESTING_MODE_ENABLED = RegisterWhWz("TestingModeEnabled", false);
         SAVED_WINDOW_SCALE = RegisterWhWz("WindowScale", 1.0, SettingValues.IsValidWindowScale);
         RR_REGION = RegisterWhWz("RR_Region", MarioKartWiiEnums.Regions.None);
@@ -298,6 +299,7 @@ public class SettingsManager : ISettingsManager
     public Setting VSYNC { get; }
     public Setting INTERNAL_RESOLUTION { get; }
     public Setting SHOW_FPS { get; }
+    public Setting HIGH_QUALITY_MII_RENDER { get; }
     public Setting GFX_BACKEND { get; }
     public Setting MACADDRESS { get; }
     public Setting WINDOW_SCALE { get; }

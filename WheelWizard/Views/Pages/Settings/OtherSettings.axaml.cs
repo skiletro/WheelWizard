@@ -38,6 +38,7 @@ public partial class OtherSettings : UserControlBase
         // Attach event handlers after loading settings to avoid unwanted triggers
         LaunchRrOnStartup.IsCheckedChanged += ClickLaunchRrOnStartup;
         EnableRecomp.IsCheckedChanged += ClickEnableRecomp;
+        HighQualityMiiRenderButton.IsCheckedChanged += HighQualityMiiRender_OnClick;
     }
 
     private void LoadSettings()
@@ -51,6 +52,7 @@ public partial class OtherSettings : UserControlBase
     private void ForceLoadSettings()
     {
         // Always loads
+        HighQualityMiiRenderButton.IsChecked = SettingsService.Get<bool>(SettingsService.HIGH_QUALITY_MII_RENDER);
 
         // The recomp only runs where a setup backend exists for it, so elsewhere the whole section stays hidden.
         var recompSupported = RecompPlatform.IsSupported;
@@ -74,6 +76,11 @@ public partial class OtherSettings : UserControlBase
     private void ClickEnableRecomp(object? sender, RoutedEventArgs e)
     {
         SettingsService.Set(SettingsService.ENABLE_RECOMP, EnableRecomp.IsChecked == true);
+    }
+
+    private void HighQualityMiiRender_OnClick(object? sender, RoutedEventArgs e)
+    {
+        SettingsService.Set(SettingsService.HIGH_QUALITY_MII_RENDER, HighQualityMiiRenderButton.IsChecked == true);
     }
 
     private async void Reinstall_RetroRewind(object sender, RoutedEventArgs e)
