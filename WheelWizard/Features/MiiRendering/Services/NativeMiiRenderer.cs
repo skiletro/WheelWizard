@@ -254,19 +254,22 @@ public sealed class NativeMiiRenderer(IMiiRenderingResourceLocator resourceLocat
 
         FillBackground(pixels, depth, outputWidth, outputHeight, background);
 
+        var cameraRotate = ConvertDegreesToRadians(request.CameraXRotate, request.CameraYRotate, request.CameraZRotate);
+        var orbitRadius = viewParameters.OrbitRadius * request.CameraZoom;
+        var baseCameraPosition = CalculateCameraOrbitPosition(orbitRadius, cameraRotate);
+        var baseCameraUp = CalculateUpVector(cameraRotate);
+        var baseCameraTarget = viewParameters.Target + new Vector3(0f, request.CameraVerticalOffset, 0f);
+        var yawStep = 360f / request.InstanceCount;
+
         for (var i = 0; i < request.InstanceCount; i++)
         {
-            var instanceYaw = request.CharacterYRotate + (360f / request.InstanceCount) * i;
-            var cameraRotate = ConvertDegreesToRadians(request.CameraXRotate, request.CameraYRotate, request.CameraZRotate);
+            var instanceYaw = request.CharacterYRotate + yawStep * i;
             var modelRotate = ConvertDegreesToRadians(request.CharacterXRotate, instanceYaw, request.CharacterZRotate);
 
-            var orbitRadius = viewParameters.OrbitRadius * request.CameraZoom;
-            var cameraPosition = CalculateCameraOrbitPosition(orbitRadius, cameraRotate);
+            var cameraPosition = baseCameraPosition;
             cameraPosition.Y += viewParameters.BaseCameraY + request.CameraVerticalOffset;
-            var cameraUp = CalculateUpVector(cameraRotate);
+            var cameraTarget = baseCameraTarget;
             var baseRotationMatrix = CreateRotationMatrix(modelRotate);
-
-            var cameraTarget = viewParameters.Target + new Vector3(0f, request.CameraVerticalOffset, 0f);
             var headModelMatrix = baseRotationMatrix;
             if (bodyRenderData is { } bodyData)
             {
@@ -278,7 +281,7 @@ public sealed class NativeMiiRenderer(IMiiRenderingResourceLocator resourceLocat
                 }
             }
 
-            var viewMatrix = Matrix4x4.CreateLookAt(cameraPosition, cameraTarget, cameraUp);
+            var viewMatrix = Matrix4x4.CreateLookAt(cameraPosition, cameraTarget, baseCameraUp);
 
             if (bodyRenderData is { } bodyMeshData)
             {
@@ -2651,14 +2654,13 @@ public sealed class NativeMiiRenderer(IMiiRenderingResourceLocator resourceLocat
 
         var meshSrt = CreateBodyMeshSrt(bodyMesh.MeshScale, bodyMesh.MeshRotate, bodyMesh.MeshTranslate);
         var modelView = modelMatrix * viewMatrix;
+        var meshView = meshSrt * modelView;
         var vertices = new RasterVertex[bodyMesh.Vertices.Length];
 
         for (var i = 0; i < bodyMesh.Vertices.Length; i++)
         {
             var vertex = bodyMesh.Vertices[i];
-            var meshPosition = Vector3.Transform(vertex.Position, meshSrt);
-            var worldPosition = Vector3.Transform(meshPosition, modelMatrix);
-            var viewPosition = Vector3.Transform(worldPosition, viewMatrix);
+            var viewPosition = Vector3.Transform(vertex.Position, meshView);
             var clip = Vector4.Transform(new Vector4(viewPosition, 1f), projectionMatrix);
             if (MathF.Abs(clip.W) <= 1e-6f)
                 return null;
@@ -2669,8 +2671,7 @@ public sealed class NativeMiiRenderer(IMiiRenderingResourceLocator resourceLocat
             var screenX = frameX + (ndc.X * 0.5f + 0.5f) * frameWidth;
             var screenY = (1f - (ndc.Y * 0.5f + 0.5f)) * frameHeight;
 
-            var meshNormal = Vector3.TransformNormal(vertex.Normal, meshSrt);
-            var normal = Vector3.TransformNormal(meshNormal, modelView);
+            var normal = Vector3.TransformNormal(vertex.Normal, meshView);
             vertices[i] = new RasterVertex(
                 new Vector2(screenX, screenY),
                 depthValue,
@@ -2749,8 +2750,7 @@ public sealed class NativeMiiRenderer(IMiiRenderingResourceLocator resourceLocat
 
         for (var i = 0; i < drawMesh.Positions.Length; i++)
         {
-            var worldPosition = Vector3.Transform(drawMesh.Positions[i], modelMatrix);
-            var viewPosition = Vector3.Transform(worldPosition, viewMatrix);
+            var viewPosition = Vector3.Transform(drawMesh.Positions[i], modelView);
             var clip = Vector4.Transform(new Vector4(viewPosition, 1f), projectionMatrix);
             if (MathF.Abs(clip.W) <= 1e-6f)
                 return null;
@@ -2983,19 +2983,21 @@ public sealed class NativeMiiRenderer(IMiiRenderingResourceLocator resourceLocat
                 if (MathF.Abs(perspectiveDenominator) < 1e-8f)
                     goto NextPixel;
 
-                var depthValue = (w0 * a.Depth * a.InvW + w1 * b.Depth * b.InvW + w2 * c.Depth * c.InvW) / perspectiveDenominator;
+                var inversePerspectiveDenominator = 1f / perspectiveDenominator;
+                var depthValue = (w0 * a.Depth * a.InvW + w1 * b.Depth * b.InvW + w2 * c.Depth * c.InvW) * inversePerspectiveDenominator;
                 if (depthValue is < 0f or > 1f)
                     goto NextPixel;
                 if (depth != null && depthValue > depth[pixelIndex])
                     goto NextPixel;
 
-                var uv = (w0 * a.Texcoord * a.InvW + w1 * b.Texcoord * b.InvW + w2 * c.Texcoord * c.InvW) / perspectiveDenominator;
+                var uv = (w0 * a.Texcoord * a.InvW + w1 * b.Texcoord * b.InvW + w2 * c.Texcoord * c.InvW) * inversePerspectiveDenominator;
                 var viewPosition =
-                    (w0 * a.ViewPosition * a.InvW + w1 * b.ViewPosition * b.InvW + w2 * c.ViewPosition * c.InvW) / perspectiveDenominator;
-                var normal = (w0 * a.Normal * a.InvW + w1 * b.Normal * b.InvW + w2 * c.Normal * c.InvW) / perspectiveDenominator;
-                var tangent = (w0 * a.Tangent * a.InvW + w1 * b.Tangent * b.InvW + w2 * c.Tangent * c.InvW) / perspectiveDenominator;
+                    (w0 * a.ViewPosition * a.InvW + w1 * b.ViewPosition * b.InvW + w2 * c.ViewPosition * c.InvW)
+                    * inversePerspectiveDenominator;
+                var normal = (w0 * a.Normal * a.InvW + w1 * b.Normal * b.InvW + w2 * c.Normal * c.InvW) * inversePerspectiveDenominator;
+                var tangent = (w0 * a.Tangent * a.InvW + w1 * b.Tangent * b.InvW + w2 * c.Tangent * c.InvW) * inversePerspectiveDenominator;
                 var parameter =
-                    (w0 * a.Parameter * a.InvW + w1 * b.Parameter * b.InvW + w2 * c.Parameter * c.InvW) / perspectiveDenominator;
+                    (w0 * a.Parameter * a.InvW + w1 * b.Parameter * b.InvW + w2 * c.Parameter * c.InvW) * inversePerspectiveDenominator;
 
                 var color = EvaluateModulateColor(mesh, uv, viewPosition, normal, tangent, parameter, lightEnabled, lightingProfile);
                 if (color.W <= 0f)
