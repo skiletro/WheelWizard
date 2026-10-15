@@ -1,6 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
+using Avalonia.VisualTree;
 using WheelWizard.GameBanana;
 using WheelWizard.GameBanana.Domain;
 using WheelWizard.Mods;
@@ -8,6 +10,7 @@ using WheelWizard.Shared.Downloads;
 using WheelWizard.Shared.Downloads.Presentation;
 using WheelWizard.Shared.MessageTranslations;
 using WheelWizard.Views.Dialogs;
+using WheelWizard.Views.Dialogs.Base;
 using WheelWizard.Views.Shell;
 
 namespace WheelWizard.Mods.Views.Dialogs;
@@ -204,18 +207,24 @@ public partial class ModContent : UserControl
             return;
 
         using var lifetime = new CancellationTokenSource();
+        var surface = this.FindAncestorOfType<PopupContent>();
         void OwnerClosed(object? sender, EventArgs e) => lifetime.Cancel();
+        void ContentDetached(object? sender, VisualTreeAttachmentEventArgs e) => lifetime.Cancel();
+        void SurfaceClosing(object? sender, EventArgs e) => lifetime.Cancel();
         owner.Closed += OwnerClosed;
+        DetachedFromVisualTree += ContentDetached;
+        if (surface != null)
+            surface.Closing += SurfaceClosing;
         try
         {
             var question = new YesNoWindow().SetMainText(t("question.install_mod.title", new { modName = mod.Name }) ?? mod.Name);
-            question.SetModalOwner(owner);
+            question.SetModalOwner(this);
             var confirmation = await question.AwaitAnswer();
             lifetime.Token.ThrowIfCancellationRequested();
             if (!confirmation)
                 return;
 
-            var installResult = await DownloadAndInstallCurrentModAsync(owner, mod, lifetime.Token);
+            var installResult = await DownloadAndInstallCurrentModAsync(mod, lifetime.Token);
             lifetime.Token.ThrowIfCancellationRequested();
             if (installResult.IsFailure)
             {
@@ -231,7 +240,7 @@ public partial class ModContent : UserControl
                     .SetMessageType(MessageBoxWindow.MessageType.Message)
                     .SetTitleText(t("message_success.mod_installed.title"))
                     .SetInfoText(t("message_success.mod_installed.extra", new { modName = mod.Name })!)
-                    .SetModalOwner(owner)
+                    .SetModalOwner(this)
                     .Show();
             }
             await LoadModDetailsAsync(mod.Id, cancellationToken: lifetime.Token);
@@ -240,14 +249,13 @@ public partial class ModContent : UserControl
         finally
         {
             owner.Closed -= OwnerClosed;
+            DetachedFromVisualTree -= ContentDetached;
+            if (surface != null)
+                surface.Closing -= SurfaceClosing;
         }
     }
 
-    private async Task<OperationResult> DownloadAndInstallCurrentModAsync(
-        BaseWindow owner,
-        GameBananaModDetails mod,
-        CancellationToken cancellationToken
-    )
+    private async Task<OperationResult> DownloadAndInstallCurrentModAsync(GameBananaModDetails mod, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -264,7 +272,7 @@ public partial class ModContent : UserControl
             return Fail("No downloadable files were found for this mod.");
 
         var progressWindow = new ProgressWindow(t("progress.downloading_mod", new { modName = mod.Name })!);
-        progressWindow.SetModalOwner(owner);
+        progressWindow.SetModalOwner(this);
         progressWindow.Show();
         progressWindow.SetExtraText(t("state.loading"));
 
@@ -300,7 +308,7 @@ public partial class ModContent : UserControl
             .SetInitialText(mod.Name)
             .SetValidation(ModManager.ValidateModName)
             .SetPlaceholderText(t("placeholder.enter_mod_name"));
-        popup.SetModalOwner(owner);
+        popup.SetModalOwner(this);
         var modName = await popup.ShowDialog();
         cancellationToken.ThrowIfCancellationRequested();
         if (modName == null)

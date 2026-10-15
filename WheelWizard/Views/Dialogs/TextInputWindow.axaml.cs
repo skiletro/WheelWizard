@@ -17,7 +17,7 @@ public partial class TextInputWindow : PopupContent
 
     // Constructor with dynamic label parameter
     public TextInputWindow()
-        : base(true, false, true, "Wheel Wizard")
+        : base("Wheel Wizard")
     {
         InitializeComponent();
         IsDismissible = true;

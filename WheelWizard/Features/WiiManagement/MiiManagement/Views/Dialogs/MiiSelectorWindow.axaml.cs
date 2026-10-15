@@ -18,7 +18,7 @@ public partial class MiiSelectorWindow : PopupContent
     private Mii? _initialMii;
 
     public MiiSelectorWindow()
-        : base(true, false, false, t("popup_title.mii_selector"))
+        : base(t("popup_title.mii_selector"))
     {
         InitializeComponent();
         IsDismissible = true;

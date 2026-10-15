@@ -2,10 +2,14 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:components="clr-namespace:WheelWizard.Views.Components"
+             xmlns:dialogBase="clr-namespace:WheelWizard.Views.Dialogs.Base"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450" ClipToBounds="False"
              x:Class="WheelWizard.Mods.Views.Dialogs.ModIndependentWindow">
-     <Grid Width="500" Height="700">
-         <!-- Use the ModDetailViewer component to display mod details -->
-         <ContentControl x:Name="ModDetailHost"/>
+     <Grid Width="600" Height="700" RowDefinitions="Auto,*">
+         <components:ModalHeading Margin="0,0,0,12">
+             <TextBlock Classes="TitleText" Text="{ReflectionBinding PopupTitle, RelativeSource={RelativeSource AncestorType=dialogBase:PopupContent}}" />
+         </components:ModalHeading>
+         <ContentControl Grid.Row="1" x:Name="ModDetailHost" ClipToBounds="True" />
      </Grid>
 </UserControl>

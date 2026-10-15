@@ -80,7 +80,7 @@ public partial class MiiAnimatorDevWindow : PopupContent
         IFilePickerService filePicker,
         IFileSystem fileSystem
     )
-        : base(true, true, false, "Mii Animator")
+        : base("Mii Animator")
     {
         MiiDb = miiDb;
         Renderer = renderer;

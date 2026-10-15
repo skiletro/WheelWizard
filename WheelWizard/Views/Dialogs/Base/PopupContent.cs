@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using WheelWizard.Views.Shell;
 
 namespace WheelWizard.Views.Dialogs.Base;
@@ -17,30 +18,21 @@ public abstract class PopupContent : UserControl
 
     public static readonly StyledProperty<bool> IsCancelableProperty = AvaloniaProperty.Register<PopupContent, bool>(nameof(IsCancelable));
 
-    private readonly bool _useNativeWindow;
-    private readonly bool _allowClose;
-    private readonly bool _allowParentInteraction;
-    private readonly bool _isTopMost;
-    private PopupWindow? _window;
     private ModalHost? _host;
     private BaseWindow? _owner;
+    private PopupContent? _modalParent;
+    internal event EventHandler? Closing;
     private bool _disableOpening;
     private TaskCompletionSource? _completion;
     private double? _preferredContentWidth;
+    private double? _preferredContentHeight;
+    private double _constrainedContentHeight = double.NaN;
     private double? _preferredMinHeight;
-
-    // Only the mod browser and mod viewer opt into native hosting.
-    protected PopupWindow Window => _window ??= CreateNativeWindow();
 
     public string PopupTitle
     {
         get => GetValue(PopupTitleProperty);
-        set
-        {
-            SetValue(PopupTitleProperty, value);
-            if (_window != null)
-                _window.WindowTitle = value;
-        }
+        set => SetValue(PopupTitleProperty, value);
     }
 
     /// <summary>Allows backdrop, Escape and close-icon dismissal, independently of explicit cancellation.</summary>
@@ -62,26 +54,7 @@ public abstract class PopupContent : UserControl
     /// <summary>Runs the same outcome as the modal's explicit Cancel/Close action. Defaults to Close.</summary>
     public Action? DismissAction { get; set; }
 
-    protected PopupContent(bool allowClose, bool allowParentInteraction, bool isTopMost, string title = "", bool useNativeWindow = false)
-    {
-        _allowClose = allowClose;
-        _allowParentInteraction = allowParentInteraction;
-        _isTopMost = isTopMost;
-        _useNativeWindow = useNativeWindow;
-        PopupTitle = title;
-    }
-
-    private PopupWindow CreateNativeWindow()
-    {
-        if (!_useNativeWindow)
-            throw new InvalidOperationException("In-app modals do not have a native popup window.");
-        return new(_allowClose, _allowParentInteraction, _isTopMost, PopupTitle)
-        {
-            PopupContent = { Content = this },
-            BeforeClose = CompleteClose,
-            BeforeOpen = BeforeOpen,
-        };
-    }
+    protected PopupContent(string title = "") => PopupTitle = title;
 
     protected override Size MeasureOverride(Size availableSize)
     {
@@ -94,9 +67,12 @@ public abstract class PopupContent : UserControl
             // Preserve the preferred width as data arrives, but allow small windows to constrain it.
             root.Width = Math.Min(availableSize.Width, _preferredContentWidth.Value);
         }
+        if (double.IsFinite(root.Height) && root.Height != _constrainedContentHeight)
+            _preferredContentHeight = root.Height;
+        if (_preferredContentHeight != null)
+            root.Height = _constrainedContentHeight = Math.Min(availableSize.Height, _preferredContentHeight.Value);
         _preferredMinHeight ??= root.MinHeight;
-        if (!_useNativeWindow)
-            root.MinHeight = Math.Min(availableSize.Height, _preferredMinHeight.Value);
+        root.MinHeight = Math.Min(availableSize.Height, _preferredMinHeight.Value);
         return base.MeasureOverride(availableSize);
     }
 
@@ -110,7 +86,20 @@ public abstract class PopupContent : UserControl
         _owner =
             TopLevel.GetTopLevel(origin) as BaseWindow
             ?? throw new InvalidOperationException("The modal origin must be attached to an application window.");
+        _modalParent = origin.GetSelfAndVisualAncestors().OfType<PopupContent>().FirstOrDefault(modal => modal != this);
         return this;
+    }
+
+    internal void NotifyClosing() => Closing?.Invoke(this, EventArgs.Empty);
+
+    internal bool IsOwnedBy(PopupContent owner)
+    {
+        for (var parent = _modalParent; parent != null; parent = parent._modalParent)
+        {
+            if (parent == owner)
+                return true;
+        }
+        return false;
     }
 
     public void Show()
@@ -119,11 +108,6 @@ public abstract class PopupContent : UserControl
         if (_disableOpening)
         {
             BeforeClose();
-            return;
-        }
-        if (_useNativeWindow)
-        {
-            Window.Show();
             return;
         }
         if (_host != null)
@@ -147,18 +131,8 @@ public abstract class PopupContent : UserControl
 
     public Task ShowDialog()
     {
-        if (_useNativeWindow)
-            return Window.ShowDialog(ViewUtils.GetLayout());
         Show();
         return _completion?.Task ?? Task.CompletedTask;
-    }
-
-    public async Task<T?> ShowDialog<T>()
-    {
-        if (_useNativeWindow)
-            return await Window.ShowDialog<T>(ViewUtils.GetLayout());
-        await ShowDialog();
-        return default;
     }
 
     public void Close() => CloseCore(animate: true);
@@ -168,11 +142,6 @@ public abstract class PopupContent : UserControl
     private void CloseCore(bool animate)
     {
         Dispatcher.UIThread.VerifyAccess();
-        if (_useNativeWindow)
-        {
-            _window?.Close();
-            return;
-        }
         var host = _host;
         if (host == null)
             return;
@@ -215,26 +184,12 @@ public abstract class PopupContent : UserControl
             Dismiss();
     }
 
-    public void Minimize()
-    {
-        if (_useNativeWindow)
-            Window.WindowState = WindowState.Minimized;
-    }
-
-    public void Focus()
-    {
-        if (_useNativeWindow)
-            Window.Focus();
-        else
-            _host?.FocusTopModal();
-    }
+    public void Focus() => _host?.FocusTopModal();
 
     protected void DisableOpen(bool value)
     {
         _disableOpening = value;
-        if (_useNativeWindow)
-            Window.DisableOpen(value);
-        else if (value)
+        if (value)
             Close();
     }
 }

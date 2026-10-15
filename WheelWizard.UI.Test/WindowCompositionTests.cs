@@ -35,7 +35,12 @@ public class WindowCompositionTests
     [InlineData("TitleBar, Border, Shadow")]
     public void LinuxCaptionButtons_FitTheCustomTitleBar(string decorationParts)
     {
-        var popup = new PopupWindow(true, false, false, "Linux header");
+        var popup = new TestWindow
+        {
+            Width = 656,
+            Height = 876,
+            ExtendClientAreaTitleBarHeightHint = 30,
+        };
         try
         {
             popup.Show();
@@ -257,58 +262,37 @@ public class WindowCompositionTests
     }
 
     [AvaloniaFact]
-    public void OwnedPopups_DisableOnlyTheirWindowGroup_AndRestoreInteraction()
+    public async Task NestedModals_StayInsideTheirOwner_AndRestoreInteraction()
     {
-        var first = new TestWindow();
-        var second = new TestWindow();
-        var popup = new TestWindow();
-        var nested = new TestWindow();
+        var first = new TestWindow { Width = 656, Height = 876 };
+        var second = new TestWindow { Width = 656, Height = 876 };
+        first.Show();
+        second.Show();
+        var popup = new SizedPopup();
+        popup.SetModalOwner(first);
+        var nested = new MessageBoxWindow().SetTitleText("Nested question");
         try
         {
-            first.Show();
-            second.Show();
-            Assert.True(first.CanInteract);
-            Assert.True(second.CanInteract);
-            popup.Show(first);
+            var popupClosed = popup.ShowDialog();
+            Assert.Same(first, TopLevel.GetTopLevel(popup));
             Assert.False(first.CanInteract);
             Assert.True(second.CanInteract);
-            nested.Show(popup);
-            Assert.False(popup.CanInteract);
+            nested.SetModalOwner(popup);
+            var nestedClosed = nested.ShowDialog();
+            Assert.Same(first, TopLevel.GetTopLevel(nested));
+            Assert.Same(nested, first.Modals.TopModal);
             nested.Close();
-            Assert.True(popup.CanInteract);
+            await nestedClosed.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Same(popup, first.Modals.TopModal);
             Assert.False(first.CanInteract);
             popup.Close();
+            await popupClosed.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.True(first.CanInteract);
         }
         finally
         {
-            nested.Close();
-            popup.Close();
             first.Close();
             second.Close();
-        }
-    }
-
-    [AvaloniaTheory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void PopupShow_PreservesOwnershipAndClosesWithItsOwner(bool allowParentInteraction)
-    {
-        var owner = new TestWindow();
-        owner.Show();
-        var popup = new OwnedPopup(owner, allowParentInteraction);
-        try
-        {
-            popup.Show();
-            Assert.Same(owner, popup.Owner);
-            Assert.Equal(allowParentInteraction, owner.CanInteract);
-            owner.Close();
-            Assert.False(popup.IsVisible);
-        }
-        finally
-        {
-            popup.Close();
-            owner.Close();
         }
     }
 
@@ -323,7 +307,8 @@ public class WindowCompositionTests
         var hadScale = resources.TryGetValue(WindowAppearance.ScaleResourceKey, out var previousScale);
         resources[WindowAppearance.ScaleResourceKey] = 1.0;
         var content = new SizedPopup();
-        var popup = content.Host;
+        var popup = new TestWindow { Width = 1280, Height = 720 };
+        popup.Show();
         try
         {
             content.Show();
@@ -342,10 +327,6 @@ public class WindowCompositionTests
             Assert.Equal(textBounds, content.Label.Bounds);
             Assert.Equal(buttonBounds, content.BottomButton.Bounds);
             Assert.Equal(16, content.Label.FontSize);
-            Assert.Equal(30, popup.ExtendClientAreaTitleBarHeightHint);
-            Assert.Equal(WindowDecorations.Full, popup.WindowDecorations);
-            Assert.Equal(SizeToContent.WidthAndHeight, popup.SizeToContent);
-            Assert.Null(popup.FindControl<Grid>("CompleteGrid")!.RenderTransform);
             AssertInsideWindow(content.BottomButton, popup);
         }
         finally
@@ -359,59 +340,10 @@ public class WindowCompositionTests
     }
 
     [AvaloniaFact]
-    public void PopupDimming_CoversTitleBarAndContent_AndRestoresTogether()
-    {
-        var popup = new PopupWindow(true, false, false, "Dimming test");
-        try
-        {
-            popup.Show();
-            popup.UpdateLayout();
-            var frame = popup.FindControl<Grid>("WindowFrame")!;
-            var overlay = popup.FindControl<Border>("DisabledDarkenEffect")!;
-            popup.SetInteractable(false);
-            popup.UpdateLayout();
-            Assert.Contains(overlay, frame.Children);
-            Assert.Equal(2, Grid.GetRowSpan(overlay));
-            Assert.True(overlay.IsVisible);
-            Assert.Equal(frame.Bounds.Height, overlay.Bounds.Height);
-            Assert.False(frame.IsEnabled);
-            popup.SetInteractable(true);
-            Assert.False(overlay.IsVisible);
-            Assert.True(frame.IsEnabled);
-        }
-        finally
-        {
-            popup.Close();
-        }
-    }
-
-    [AvaloniaFact]
-    public void NonClosablePopup_RejectsNativeCloseButAllowsProgrammaticCompletion()
-    {
-        var popup = new ClosingPopup();
-        var userClose = CreateClosingArgs(false);
-        popup.RequestClose(userClose);
-        Assert.True(userClose.Cancel);
-        var completion = CreateClosingArgs(true);
-        popup.RequestClose(completion);
-        Assert.False(completion.Cancel);
-        popup.CanClose = true;
-        var allowed = CreateClosingArgs(false);
-        popup.RequestClose(allowed);
-        Assert.False(allowed.Cancel);
-        popup.Close();
-    }
-
-    [AvaloniaFact]
     public void DisabledWindows_RejectNativeCloseButAllowCompletionAndShutdown()
     {
         var main = new TestWindow();
-        var popup = new ClosingPopup { CanClose = true };
-        (BaseWindow Window, Action<WindowClosingEventArgs> RequestClose)[] windows =
-        [
-            (main, main.RequestClose),
-            (popup, popup.RequestClose),
-        ];
+        (BaseWindow Window, Action<WindowClosingEventArgs> RequestClose)[] windows = [(main, main.RequestClose)];
         foreach (var (window, requestClose) in windows)
         {
             try
@@ -445,23 +377,25 @@ public class WindowCompositionTests
     }
 
     [AvaloniaFact]
-    public void Popup_AutoSizingFollowsContentGrowthAndShrinkage()
+    public void Modal_FollowsContentGrowthAndShrinkage_WithinTheLandscapeViewport()
     {
         var content = new SizedPopup();
-        var popup = content.Host;
+        var popup = new TestWindow { Width = 1280, Height = 720 };
+        popup.Show();
         try
         {
             content.Show();
             popup.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
-            var initialSize = popup.ClientSize;
-            foreach (var height in new[] { 330.0, 200.0, 260.0, 200.0 })
+            var initialSize = content.Bounds.Size;
+            foreach (var height in new[] { 330.0, 200.0, 900.0, 260.0, 200.0 })
             {
                 content.Root.Height = height;
                 popup.UpdateLayout();
                 Dispatcher.UIThread.RunJobs();
-                Assert.Equal(initialSize.Width, popup.ClientSize.Width);
-                Assert.Equal(initialSize.Height + height - 200, popup.ClientSize.Height);
+                Assert.Equal(initialSize.Width, content.Bounds.Width);
+                Assert.True(content.Bounds.Height <= popup.ClientSize.Height - 48);
+                Assert.True(content.Bounds.Height <= height);
                 Assert.Equal(16, content.Label.FontSize);
                 AssertInsideWindow(content.BottomButton, popup);
             }
@@ -602,13 +536,12 @@ public class WindowCompositionTests
 
     private sealed class SizedPopup : PopupContent
     {
-        public PopupWindow Host => Window;
         public Grid Root { get; }
         public TextBlock Label { get; } = new() { Text = "Unscaled modal content", FontSize = 16 };
         public Button BottomButton { get; } = new() { Content = "Bottom button" };
 
         public SizedPopup()
-            : base(true, false, false, "Scale test", useNativeWindow: true)
+            : base("Scale test")
         {
             Root = new Grid
             {
@@ -636,20 +569,6 @@ public class WindowCompositionTests
                 culture: null
             )!;
 
-    private sealed class ClosingPopup : PopupWindow
-    {
-        public void RequestClose(WindowClosingEventArgs args) => OnClosing(args);
-    }
-
-    private sealed class OwnedPopup : PopupWindow
-    {
-        public OwnedPopup(Window owner, bool allowParentInteraction)
-            : base(true, allowParentInteraction, false, "Owned popup")
-        {
-            Owner = owner;
-        }
-    }
-
     private sealed class TestWindow : BaseWindow
     {
         public void RequestClose(WindowClosingEventArgs args) => OnClosing(args);
@@ -660,9 +579,8 @@ public class WindowCompositionTests
         protected override Control InteractionContent => _content;
         public bool CanInteract => _content.IsEnabled;
 
-        public TestWindow(bool allowParentInteraction = false)
+        public TestWindow()
         {
-            AllowParentInteraction = allowParentInteraction;
             Content = _content;
         }
     }

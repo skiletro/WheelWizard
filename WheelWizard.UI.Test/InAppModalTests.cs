@@ -148,28 +148,30 @@ public class InAppModalTests
     }
 
     [AvaloniaFact]
-    public async Task ExplicitOwner_KeepsPromptInsideItsModWindow()
+    public async Task ExplicitOwner_KeepsNestedModPromptInsideTheMainWindow()
     {
         var main = new ModalTestWindow();
         main.Show();
-        var mod = new ModTestWindow(main);
-        mod.Show();
+        var mod = new TestModal();
+        mod.SetModalOwner(main);
+        var modClosed = mod.ShowDialog();
         try
         {
-            Layout(mod);
-            var size = mod.ClientSize;
+            Layout(main);
+            var size = main.ClientSize;
             var prompt = new MessageBoxWindow().SetTitleText("Mod question");
             prompt.SetModalOwner(mod);
             var closed = prompt.ShowDialog();
-            Layout(mod);
-            Assert.Same(mod, TopLevel.GetTopLevel(prompt));
-            Assert.Same(prompt, mod.Modals.TopModal);
-            Assert.False(main.Modals.HasModals);
-            Assert.Equal(size, mod.ClientSize);
+            Layout(main);
+            Assert.Same(main, TopLevel.GetTopLevel(mod));
+            Assert.Same(main, TopLevel.GetTopLevel(prompt));
+            Assert.Same(prompt, main.Modals.TopModal);
+            Assert.Equal(size, main.ClientSize);
             prompt.Close();
             await closed.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.False(main.CanInteract);
             mod.Close();
+            await modClosed.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.True(main.CanInteract);
         }
         finally
@@ -574,7 +576,7 @@ public class InAppModalTests
         public int ClosedCount { get; private set; }
 
         public TestModal()
-            : base(false, false, false, "Required action")
+            : base("Required action")
         {
             Content = new StackPanel
             {
@@ -590,17 +592,49 @@ public class InAppModalTests
         protected override void BeforeClose() => ClosedCount++;
     }
 
-    private sealed class ModTestWindow : PopupWindow
+    [AvaloniaFact]
+    public async Task ClosingModSurface_CompletesItsNestedPromptWithoutClosingTheShell()
     {
-        public ModTestWindow(Window owner)
-            : base(true, false, false, "Mod browser")
+        var owner = new ModalTestWindow();
+        owner.Show();
+        try
         {
-            Owner = owner;
-            this.FindControl<Avalonia.Controls.Presenters.ContentPresenter>("PopupContent")!.Content = new Border
-            {
-                Width = 600,
-                Height = 600,
-            };
+            var surface = new TestModal();
+            var surfaceClosed = surface.ShowDialog();
+            var prompt = new YesNoWindow().SetMainText("Install this mod?");
+            prompt.SetModalOwner(surface);
+            var answer = prompt.AwaitAnswer();
+            surface.Close();
+            Assert.False(await answer.WaitAsync(TimeSpan.FromSeconds(2)));
+            await surfaceClosed.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(owner.IsVisible);
+            Assert.False(owner.Modals.HasModals);
+            Assert.True(owner.CanInteract);
+        }
+        finally
+        {
+            owner.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ModalFocus_CannotEscapeToDirectionalChromeNavigation()
+    {
+        var owner = new ModalTestWindow { Width = 1280, Height = 720 };
+        owner.Show();
+        try
+        {
+            var modal = new TestModal();
+            modal.Show();
+            Layout(owner);
+            owner.CaptionButton.Focus(NavigationMethod.Directional);
+            var focused = Assert.IsAssignableFrom<Control>(owner.FocusManager!.GetFocusedElement());
+            Assert.NotSame(owner.CaptionButton, focused);
+            Assert.Contains(modal, focused.GetVisualAncestors());
+        }
+        finally
+        {
+            owner.Close();
         }
     }
 

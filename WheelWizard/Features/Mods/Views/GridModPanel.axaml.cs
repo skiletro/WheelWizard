@@ -8,6 +8,7 @@ using Avalonia.VisualTree;
 using WheelWizard.Models.Mods;
 using WheelWizard.Mods.Views;
 using WheelWizard.Views.Components;
+using WheelWizard.Views.Shell.Couch;
 
 namespace WheelWizard.Mods.Views;
 
@@ -28,10 +29,24 @@ public partial class GridModPanel : UserControl
         KeyDown += OnCardKeyDown;
     }
 
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == CouchMode.IsEnabledProperty && CouchEnableToggle is not null)
+            ApplyPresentation();
+    }
+
+    private void ApplyPresentation()
+    {
+        var couch = CouchMode.GetIsEnabled(this);
+        CouchEnableToggle.IsVisible = couch;
+        Focusable = !couch;
+    }
+
     private bool _cardPressed;
 
     private static bool IsPriorityInput(object? source) =>
-        source is Visual visual && (visual is TextBox || visual.GetVisualAncestors().OfType<TextBox>().Any());
+        source is Visual visual && (visual is TextBox or Button || visual.GetVisualAncestors().Any(parent => parent is TextBox or Button));
 
     private void OnCardPointerPressed(object? sender, PointerPressedEventArgs e)
     {
@@ -96,6 +111,7 @@ public partial class GridModPanel : UserControl
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
+        ApplyPresentation();
         if (_observedMod != null)
         {
             _observedMod.PropertyChanged -= OnModChanged;

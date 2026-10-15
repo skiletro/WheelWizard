@@ -9,6 +9,30 @@
              x:Class="WheelWizard.Mods.Views.ModsPage"
              x:DataType="mods:ModsPage"
         xmlns:mods="clr-namespace:WheelWizard.Mods.Views">
+    <UserControl.Styles>
+        <Style Selector="Border.ModRow">
+            <Setter Property="Height" Value="50" />
+        </Style>
+        <Style Selector="mods|ModsPage.couch Border.ModRow">
+            <Setter Property="Height" Value="76" />
+        </Style>
+        <Style Selector="StackPanel.CouchModActions">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <Style Selector="mods|ModsPage.couch StackPanel.CouchModActions">
+            <Setter Property="IsVisible" Value="True" />
+        </Style>
+        <Style Selector="mods|ModsPage.couch StackPanel#VisibleWithBlocks">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <Style Selector="mods|ModsPage.couch UniformGrid">
+            <Setter Property="Columns" Value="3" />
+        </Style>
+        <Style Selector="mods|ModsPage.couch components|ActionButton:focus-visible">
+            <Setter Property="BorderBrush" Value="{StaticResource Brand400}" />
+            <Setter Property="BorderThickness" Value="2" />
+        </Style>
+    </UserControl.Styles>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" MinHeight="95" />
@@ -67,7 +91,7 @@
             <ListBox Grid.Row="1" x:Name="ModsListBox" ItemsSource="{Binding Mods}" Margin="10,5" Padding="0,0,0,68">
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Border Classes="BoxItemBackground" Height="50">
+                        <Border Classes="BoxItemBackground ModRow">
                             <Border.ContextMenu>
                                 <ContextMenu>
                                     <MenuItem Header="{loc:T action.rename}" Click="RenameMod_Click" />
@@ -149,6 +173,13 @@
 
 
                                     </StackPanel>
+                                    <StackPanel Classes="CouchModActions" Orientation="Horizontal" Spacing="8" Margin="8,0">
+                                        <components:ActionButton Text="↑" AutomationProperties.Name="Move mod up" MinHeight="44"
+                                                                 IsEnabled="{Binding IsLowest, Converter={x:Static BoolConverters.Not}}" Click="ButtonUp_OnClick" />
+                                        <components:ActionButton Text="↓" AutomationProperties.Name="Move mod down" MinHeight="44"
+                                                                 IsEnabled="{Binding IsHighest, Converter={x:Static BoolConverters.Not}}" Click="ButtonDown_OnClick" />
+                                        <components:ActionButton Text="…" AutomationProperties.Name="Mod actions" MinHeight="44" Click="ModActions_OnClick" />
+                                    </StackPanel>
 
                                     <StackPanel.Styles>
                                         <Style Selector="ListBox.Rows ListBoxItem StackPanel#VisibleWithBlocks">
@@ -182,7 +213,16 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <Border>
-                                <mods:GridModPanel />
+                                <StackPanel>
+                                    <mods:GridModPanel />
+                                    <StackPanel Classes="CouchModActions" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="4,0,4,12">
+                                        <components:ActionButton Text="↑" AutomationProperties.Name="Move mod up" MinHeight="44"
+                                                                 IsEnabled="{Binding IsLowest, Converter={x:Static BoolConverters.Not}}" Click="ButtonUp_OnClick" />
+                                        <components:ActionButton Text="↓" AutomationProperties.Name="Move mod down" MinHeight="44"
+                                                                 IsEnabled="{Binding IsHighest, Converter={x:Static BoolConverters.Not}}" Click="ButtonDown_OnClick" />
+                                        <components:ActionButton Text="…" AutomationProperties.Name="Mod actions" MinHeight="44" Click="ModActions_OnClick" />
+                                    </StackPanel>
+                                </StackPanel>
                                 <Border.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="{loc:T action.rename}" Click="RenameMod_Click" />

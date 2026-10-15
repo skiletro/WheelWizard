@@ -9,13 +9,15 @@ public partial class ModIndependentWindow : PopupContent
     private ModContent ModDetailViewer { get; }
 
     private INavigationService Navigation { get; }
+    private readonly CancellationTokenSource _lifetime = new();
 
     public ModIndependentWindow(ModContent modDetailViewer, INavigationService navigation, string windowTitle = "Mod Details")
-        : base(true, false, true, windowTitle, useNativeWindow: true)
+        : base(windowTitle)
     {
         ModDetailViewer = modDetailViewer;
         Navigation = navigation;
         InitializeComponent();
+        IsDismissible = true;
         ModDetailHost.Content = ModDetailViewer;
         if (PopupTitle == "Mod Details")
             PopupTitle = t("popup_title.mod_details");
@@ -23,11 +25,13 @@ public partial class ModIndependentWindow : PopupContent
 
     public async Task LoadModAsync(int modId, string? newDownloadUrl = null)
     {
-        await ModDetailViewer.LoadModDetailsAsync(modId, newDownloadUrl);
+        await ModDetailViewer.LoadModDetailsAsync(modId, newDownloadUrl, _lifetime.Token);
     }
 
     protected override void BeforeClose()
     {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
         Navigation.NavigateTo<ModsPage>();
         base.BeforeClose();
     }

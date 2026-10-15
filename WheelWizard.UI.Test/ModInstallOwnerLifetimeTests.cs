@@ -1,6 +1,5 @@
 using System.Reflection;
 using Avalonia.Controls;
-using Avalonia.Controls.Presenters;
 using Avalonia.Headless.XUnit;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
@@ -14,6 +13,7 @@ using WheelWizard.Shared.Downloads;
 using WheelWizard.Views.Components;
 using WheelWizard.Views.Dialogs;
 using WheelWizard.Views.Dialogs.Base;
+using WheelWizard.Views.Shell;
 
 namespace WheelWizard.UI.Test;
 
@@ -24,7 +24,7 @@ public class ModInstallOwnerLifetimeTests
     [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(true, true)]
-    public async Task ClosedOwner_CancelsDownloadAndSuppressesLateSuccessOrFailureDialogs(bool downloadFails, bool detachContent)
+    public async Task ClosedSurface_CancelsDownloadAndSuppressesLateSuccessOrFailureDialogs(bool downloadFails, bool closeShell)
     {
         var manager = Substitute.For<IModManager>();
         var gameBanana = Substitute.For<IGameBananaSingletonService>();
@@ -51,11 +51,14 @@ public class ModInstallOwnerLifetimeTests
             });
         var content = new ModContent(manager, gameBanana, downloads, Substitute.For<IGameBananaMediaService>(), paths, presentation);
         typeof(ModContent).GetProperty("CurrentMod", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(content, CreateMod());
-        var owner = new PopupWindow(true, false, false, "Mod viewer");
-        owner.FindControl<ContentPresenter>("PopupContent")!.Content = content;
+        var owner = new TestWindow();
         owner.Show();
-        // Keep a second app window open: late failures must not surface there either.
-        var other = new PopupWindow(true, true, false, "Other window");
+        var surface = new ModSurface { Content = content };
+        surface.SetModalOwner(owner);
+        var surfaceClosed = surface.ShowDialog();
+        owner.UpdateLayout();
+        // Keep another app window open: late failures must not move to a different owner.
+        var other = new TestWindow();
         other.Show();
         try
         {
@@ -66,16 +69,14 @@ public class ModInstallOwnerLifetimeTests
             var question = Assert.IsType<YesNoWindow>(owner.Modals.TopModal);
             question.FindControl<ActionButton>("YesButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var token = await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
-            owner.Close();
-            Assert.True(token.IsCancellationRequested);
-            Assert.False(owner.IsVisible);
-            if (detachContent)
-            {
-                owner.FindControl<ContentPresenter>("PopupContent")!.Content = null;
-                Assert.Null(TopLevel.GetTopLevel(content));
-            }
+            if (closeShell)
+                owner.Close();
             else
-                Assert.Same(owner, TopLevel.GetTopLevel(content));
+                surface.Close();
+            await surfaceClosed.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(token.IsCancellationRequested);
+            Assert.Equal(!closeShell, owner.IsVisible);
+            Assert.Null(TopLevel.GetTopLevel(content));
             File.WriteAllText(Path.Combine(directory, "mod.zip"), "Downloaded test file");
             finished.SetResult(
                 downloadFails
@@ -96,6 +97,23 @@ public class ModInstallOwnerLifetimeTests
             other.Close();
             if (Directory.Exists(directory))
                 Directory.Delete(directory, true);
+        }
+    }
+
+    private sealed class ModSurface : PopupContent { }
+
+    private sealed class TestWindow : BaseWindow
+    {
+        private readonly Border _content = new();
+        private readonly Border _overlay = new();
+        protected override Control InteractionContent => _content;
+        protected override Control InteractionOverlay => _overlay;
+
+        public TestWindow()
+        {
+            Width = 1280;
+            Height = 720;
+            Content = _content;
         }
     }
 

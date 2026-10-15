@@ -10,9 +10,10 @@ namespace WheelWizard.Views.Shell;
 
 public abstract class BaseWindow : Window
 {
-    private List<WindowLayer> _windowLayers = [];
     private ModalHost? _modals;
     private Border? _modalChromeDimmer;
+    private Border? _startupLoading;
+    internal bool IsStartupLoading { get; private set; }
     private static readonly List<BaseWindow> OpenWindows = [];
     public ModalHost Modals => _modals ?? throw new InvalidOperationException("The window must be open before showing a modal.");
 
@@ -40,6 +41,24 @@ public abstract class BaseWindow : Window
         Content = null;
         var root = new Grid();
         root.Children.Add(content);
+        _startupLoading = new Border
+        {
+            Name = "StartupLoading",
+            Background = this.FindResource("BackgroundColor") as IBrush,
+            IsVisible = IsStartupLoading,
+            Child = new StackPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Spacing = 16,
+                Children =
+                {
+                    new TextBlock { Text = t("state.loading"), HorizontalAlignment = HorizontalAlignment.Center },
+                    new ProgressBar { IsIndeterminate = true, Width = 180 },
+                },
+            },
+        };
+        root.Children.Add(_startupLoading);
         _modalChromeDimmer = new Border
         {
             Name = "ModalChromeDimmer",
@@ -56,11 +75,19 @@ public abstract class BaseWindow : Window
         Content = root;
     }
 
+    internal void SetStartupLoading(bool loading)
+    {
+        IsStartupLoading = loading;
+        if (_startupLoading != null)
+            _startupLoading.IsVisible = loading;
+        UpdateModalInteraction();
+    }
+
     internal void UpdateModalInteraction()
     {
         InteractionOverlay.IsVisible = _disableCount != 0;
         InteractionContent.IsEnabled = _disableCount == 0;
-        ModalInteractionContent.IsEnabled = _disableCount == 0 && !(_modals?.HasModals ?? false);
+        ModalInteractionContent.IsEnabled = !IsStartupLoading && _disableCount == 0 && !(_modals?.HasModals ?? false);
         if (_modals != null)
             _modals.IsEnabled = _disableCount == 0;
         UpdateModalChromeDimming();
@@ -77,7 +104,6 @@ public abstract class BaseWindow : Window
     }
 
     private int _disableCount = 0;
-    private WindowLayer? _currentLayer;
     private readonly Action<Size, Size>? _setWaylandSizeConstraints;
     private bool _waylandSizeUpdateQueued;
 
@@ -85,8 +111,6 @@ public abstract class BaseWindow : Window
     protected abstract Control InteractionContent { get; } // The content that will be disabled when the overlay is shown
 
     protected virtual Control ModalInteractionContent => InteractionContent;
-
-    protected bool AllowParentInteraction = false;
 
     private void InstallMacWindowMenu()
     {
@@ -128,9 +152,25 @@ public abstract class BaseWindow : Window
         };
     }
 
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property != CanResizeProperty || _setWaylandSizeConstraints == null)
+            return;
+        if (CanResize)
+            _setWaylandSizeConstraints(new Size(MinWidth, MinHeight), new Size(MaxWidth, MaxHeight));
+        else
+            UpdateWaylandSizeConstraints();
+    }
+
     protected override void OnResized(WindowResizedEventArgs e)
     {
         base.OnResized(e);
+        UpdateWaylandSizeConstraints();
+    }
+
+    private void UpdateWaylandSizeConstraints()
+    {
         if (CanResize || _setWaylandSizeConstraints == null || _waylandSizeUpdateQueued)
             return;
 
@@ -152,26 +192,23 @@ public abstract class BaseWindow : Window
         );
     }
 
-    private void AttachMacWindowMenu()
+    protected void AttachMacWindowMenu()
     {
         if (IsVisible && TryGetPlatformHandle()?.HandleDescriptor == "NSWindow")
-            MacWindowMenu.Attach(TryGetPlatformHandle()!.Handle);
+            MacWindowMenu.Attach(TryGetPlatformHandle()!.Handle, this is Layout { IsCouchMode: true });
     }
 
     protected override void OnOpened(EventArgs e)
     {
         InstallModalHost();
         OpenWindows.Add(this);
-        if (Owner is BaseWindow owner)
-            _windowLayers = owner._windowLayers;
-        AddLayer();
         InstallMacWindowMenu();
         base.OnOpened(e);
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)
     {
-        // An in-app modal leaves native window controls usable. Separate owned windows still gate their owner.
+        // Application operations can still gate native close while their work is in progress.
         if (_disableCount != 0 && !e.IsProgrammatic && e.CloseReason == WindowCloseReason.WindowClosing)
             e.Cancel = true;
         base.OnClosing(e);
@@ -181,47 +218,7 @@ public abstract class BaseWindow : Window
     {
         _modals?.CloseAll();
         OpenWindows.Remove(this);
-        RemoveLayer();
         base.OnClosed(e);
-    }
-
-    private void AddLayer()
-    {
-        if (_currentLayer is not null)
-            return;
-        if (!AllowParentInteraction || _windowLayers.Count == 0)
-        {
-            _currentLayer = new(this);
-            if (_windowLayers.Count != 0)
-                _windowLayers.Last().SetInteractable(false);
-            _windowLayers.Add(_currentLayer);
-
-            return;
-        }
-
-        _windowLayers.Last().SubsequentWindows.Add(this);
-        _currentLayer = _windowLayers.Last();
-    }
-
-    private void RemoveLayer()
-    {
-        var layer = _currentLayer;
-        _currentLayer = null;
-        if (layer?.Owner == this)
-        {
-            _windowLayers.Remove(layer);
-
-            foreach (var bw in layer.SubsequentWindows.ToArray())
-            {
-                bw.Close();
-            }
-
-            if (_windowLayers.Count != 0)
-                _windowLayers.Last().SetInteractable(true);
-            return;
-        }
-
-        layer?.SubsequentWindows.Remove(this);
     }
 
     public void SetInteractable(bool value)
@@ -232,20 +229,5 @@ public abstract class BaseWindow : Window
             _disableCount--;
 
         UpdateModalInteraction();
-    }
-
-    protected class WindowLayer(BaseWindow owner)
-    {
-        public BaseWindow Owner { get; set; } = owner;
-        public readonly List<BaseWindow> SubsequentWindows = [];
-
-        public void SetInteractable(bool active)
-        {
-            Owner.SetInteractable(active);
-            foreach (var subsequentWindow in SubsequentWindows)
-            {
-                subsequentWindow.SetInteractable(active);
-            }
-        }
     }
 }

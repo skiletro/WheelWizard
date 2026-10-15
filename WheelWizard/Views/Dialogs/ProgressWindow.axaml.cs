@@ -28,7 +28,7 @@ public partial class ProgressWindow : PopupContent
         : this("Progress Window") { }
 
     public ProgressWindow(string windowTitle)
-        : base(false, false, true, windowTitle)
+        : base(windowTitle)
     {
         InitializeComponent();
         GoalTextBlock.Text = string.IsNullOrWhiteSpace(windowTitle) || windowTitle == "Progress Window" ? t("state.loading") : windowTitle;

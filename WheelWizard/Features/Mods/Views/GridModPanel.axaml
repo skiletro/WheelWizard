@@ -49,6 +49,10 @@
                         </StackPanel>
                     </ToolTip.Tip>
                     </PathIcon>
+                    <components:ToggleCheckBox x:Name="CouchEnableToggle" IsVisible="False" Variant="Switch"
+                                              IsChecked="{Binding Mod.IsEnabled, Mode=TwoWay}"
+                                              AutomationProperties.Name="Enable mod"
+                                              HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8" />
                     <!-- Placeholder icon when no image is loaded -->
                     <PathIcon IsVisible="{Binding Preview.ShowPlaceholder}"
                               Data="{StaticResource CubesStacked}"

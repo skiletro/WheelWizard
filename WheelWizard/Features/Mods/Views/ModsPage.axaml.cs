@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using WheelWizard.Features.Patches;
 using WheelWizard.Models.Mods;
@@ -18,6 +19,7 @@ using WheelWizard.Shared.MessageTranslations;
 using WheelWizard.Views.Components;
 using WheelWizard.Views.Dialogs;
 using WheelWizard.Views.Shell;
+using WheelWizard.Views.Shell.Couch;
 
 namespace WheelWizard.Mods.Views;
 
@@ -90,6 +92,7 @@ public partial class ModsPage : UserControl, INotifyPropertyChanged
     private Border? _dropIndicatorLine;
     private IPointer? _capturedPointer;
     private bool _viewInitialized;
+    private bool _isAttached;
     private const double DragThreshold = 5.0;
 
     public ModsPage(
@@ -132,12 +135,38 @@ public partial class ModsPage : UserControl, INotifyPropertyChanged
         PointerCaptureLost += OnDragPointerCaptureLost;
     }
 
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == CouchMode.IsEnabledProperty)
+            Classes.Set("couch", CouchMode.GetIsEnabled(this));
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _isAttached = true;
+        Classes.Set("couch", CouchMode.GetIsEnabled(this));
+        ModManager.PropertyChanged -= OnModsChanged;
+        ModManager.PropertyChanged += OnModsChanged;
+    }
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        _isAttached = false;
         ModManager.PropertyChanged -= OnModsChanged;
-        foreach (var preview in _previews.Values)
-            preview.Dispose();
-        _previews.Clear();
+        CancelDrag();
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                if (_isAttached)
+                    return;
+                foreach (var preview in _previews.Values)
+                    preview.Dispose();
+                _previews.Clear();
+            },
+            DispatcherPriority.Background
+        );
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -168,6 +197,7 @@ public partial class ModsPage : UserControl, INotifyPropertyChanged
     private void BrowseMod_Click(object sender, RoutedEventArgs e)
     {
         var modPopup = Popups.Create<ModBrowserWindow>();
+        modPopup.SetModalOwner(this);
         modPopup.Show();
     }
 
@@ -341,8 +371,34 @@ public partial class ModsPage : UserControl, INotifyPropertyChanged
         }
 
         var modPopup = Popups.Create<ModIndependentWindow>();
+        modPopup.SetModalOwner(this);
         _ = modPopup.LoadModAsync(selectedMod.Mod.ModID);
         modPopup.ShowDialog();
+    }
+
+    private void ModActions_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: ModListItem item } anchor)
+            return;
+        var menu = new MenuFlyout();
+        AddAction(t("action.rename"), RenameMod_Click);
+        AddAction(t("action.delete"), DeleteMod_Click);
+        AddAction(t("action.convert_to_patches"), ConvertToPatches_Click, item.Mod.HasIncompatibleFiles);
+        AddAction(t("action.view_mod"), ViewMod_Click);
+        AddAction(t("action.open_folder"), OpenFolder_Click);
+        menu.ShowAt(anchor);
+
+        void AddAction(string? title, Action<object, RoutedEventArgs> action, bool enabled = true)
+        {
+            var option = new MenuItem
+            {
+                Header = title,
+                DataContext = item,
+                IsEnabled = enabled,
+            };
+            option.Click += (_, args) => action(option, args);
+            menu.Items.Add(option);
+        }
     }
 
     /// <summary>
@@ -394,6 +450,8 @@ public partial class ModsPage : UserControl, INotifyPropertyChanged
 
     private Mod? GetParentsMod(RoutedEventArgs eventArgs)
     {
+        if (eventArgs.Source is Control { DataContext: ModListItem item })
+            return item.Mod;
         var parent = ViewUtils.FindParent<ListBoxItem>(eventArgs.Source);
         if (parent?.Content is ModListItem mod)
             return mod.Mod;
@@ -409,6 +467,7 @@ public partial class ModsPage : UserControl, INotifyPropertyChanged
         var priorityResult = await ModManager.DecreasePriorityAsync(mod);
         if (priorityResult.IsFailure)
             MessageTranslationHelper.ShowMessage(priorityResult.Error);
+        RestoreCouchModFocus(mod, "↑");
     }
 
     private async void ButtonDown_OnClick(object? sender, RoutedEventArgs e)
@@ -420,6 +479,34 @@ public partial class ModsPage : UserControl, INotifyPropertyChanged
         var priorityResult = await ModManager.IncreasePriorityAsync(mod);
         if (priorityResult.IsFailure)
             MessageTranslationHelper.ShowMessage(priorityResult.Error);
+        RestoreCouchModFocus(mod, "↓");
+    }
+
+    private void RestoreCouchModFocus(Mod mod, string preferredText)
+    {
+        if (!CouchMode.GetIsEnabled(this))
+            return;
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                if (!_isAttached || !CouchMode.GetIsEnabled(this))
+                    return;
+                var actions = this.GetVisualDescendants()
+                    .OfType<ActionButton>()
+                    .Where(button =>
+                        button.IsEffectivelyVisible
+                        && button.IsEffectivelyEnabled
+                        && button.DataContext is ModListItem item
+                        && item.Mod == mod
+                    )
+                    .ToArray();
+                var target =
+                    actions.FirstOrDefault(button => button.Text == preferredText) ?? actions.FirstOrDefault(button => button.Text == "…");
+                target?.BringIntoView();
+                target?.Focus(NavigationMethod.Directional);
+            },
+            DispatcherPriority.Background
+        );
     }
 
     private void ModsView_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)

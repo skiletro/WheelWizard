@@ -13,7 +13,7 @@ public partial class OptionsWindow : PopupContent
     private TaskCompletionSource<string?>? _tcs;
 
     public OptionsWindow()
-        : base(true, false, true, "Choose an option")
+        : base("Choose an option")
     {
         InitializeComponent();
         IsDismissible = true;

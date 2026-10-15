@@ -12,7 +12,7 @@
         xmlns:miiImages="clr-namespace:WheelWizard.MiiImages.Views"
         xmlns:dialogBase="clr-namespace:WheelWizard.Views.Dialogs.Base"
         xmlns:communityDialogs="clr-namespace:WheelWizard.WheelWizardData.Views.Dialogs">
-    <Grid Width="540" MinHeight="400" MaxHeight="760" RowDefinitions="Auto,*">
+    <Grid x:Name="PlayerProfileLayout" Width="540" MinHeight="400" MaxHeight="760" RowDefinitions="Auto,*">
         <components:ModalHeading Margin="0,0,0,12">
             <TextBlock Classes="TitleText" Text="Player profile" />
         </components:ModalHeading>
@@ -32,8 +32,8 @@
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                       IsVisible="{Binding Profile, Converter={x:Static ObjectConverters.IsNotNull}}">
-            <StackPanel Spacing="12" Margin="0,8,0,4">
-                <Grid ColumnDefinitions="Auto,*">
+            <Grid x:Name="PlayerProfileBody" RowDefinitions="Auto,Auto,Auto,Auto,Auto" Margin="0,8,0,4">
+                <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,12">
                     <Border Grid.Column="0" CornerRadius="999999" ClipToBounds="True"
                             Background="{StaticResource Neutral950}" Width="84" Height="84" Margin="0,0,14,0">
                         <miiImages:MiiImageLoader HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
@@ -59,9 +59,9 @@
                     </StackPanel>
                 </Grid>
 
-                <Border Background="{StaticResource BackgroundLineColor}" Height="1" />
+                <Border Grid.Row="1" Background="{StaticResource BackgroundLineColor}" Height="1" Margin="0,0,0,12" />
 
-                <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto">
+                <Grid Grid.Row="2" ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto" Margin="0,0,0,12">
                     <StackPanel Grid.Column="0" Grid.Row="0" Margin="0,0,12,8">
                         <components:FormFieldLabel Text="{loc:T attribute.vr_abbreviation}"
                                                    TipText="{loc:T attribute.vr_full}" />
@@ -89,10 +89,10 @@
                     </StackPanel>
                 </Grid>
 
-                <Border Background="{StaticResource BackgroundLineColor}" Height="1" />
+                <Border Grid.Row="3" Background="{StaticResource BackgroundLineColor}" Height="1" Margin="0,0,0,12" />
 
-                <ContentControl x:Name="HistoryHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
-            </StackPanel>
+                <ContentControl Grid.Row="4" x:Name="HistoryHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+            </Grid>
         </ScrollViewer>
     </Grid>
 </dialogBase:PopupContent>

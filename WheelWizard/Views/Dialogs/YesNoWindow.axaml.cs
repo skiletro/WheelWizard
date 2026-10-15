@@ -19,7 +19,7 @@ public partial class YesNoWindow : PopupContent
     private TaskCompletionSource<bool>? _tcs;
 
     public YesNoWindow()
-        : base(true, false, true, "Wheel Wizard")
+        : base("Wheel Wizard")
     {
         InitializeComponent();
         IsDismissible = true;
@@ -83,7 +83,7 @@ public partial class YesNoWindow : PopupContent
             return await Dispatcher.UIThread.InvokeAsync(() => AwaitAnswer());
         }
         _tcs = new();
-        Show(); // Or ShowDialog(parentWindow) if you need it to be modal
+        Show();
         return await _tcs.Task;
     }
 }

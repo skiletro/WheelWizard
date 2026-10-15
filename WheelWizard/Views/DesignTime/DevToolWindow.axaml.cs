@@ -39,7 +39,7 @@ public partial class DevToolWindow : PopupContent, IPollingListener
         INavigationService navigation,
         IPopupFactory popups
     )
-        : base(true, true, true, "Dev Tool")
+        : base("Dev Tool")
     {
         Cache = cache;
         DolphinLaunchService = dolphinLaunchService;

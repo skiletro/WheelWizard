@@ -18,7 +18,7 @@ public partial class MessageBoxWindow : PopupContent
     private MessageType messageType = MessageType.Message;
 
     public MessageBoxWindow()
-        : base(true, false, true, t("attribute.message"))
+        : base(t("attribute.message"))
     {
         InitializeComponent();
         IsDismissible = true;

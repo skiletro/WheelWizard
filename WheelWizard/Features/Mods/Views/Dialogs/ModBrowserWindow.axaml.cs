@@ -51,13 +51,14 @@ public partial class ModBrowserWindow : PopupContent, INotifyPropertyChanged
         INavigationService navigation,
         IGameBananaMediaService media
     )
-        : base(true, false, false, t("popup_title.mod_browser"), useNativeWindow: true)
+        : base(t("popup_title.mod_browser"))
     {
         ModDetailViewer = modDetailViewer;
         GameBananaService = gameBananaService;
         Navigation = navigation;
         _media = media;
         InitializeComponent();
+        IsDismissible = true;
         ModDetailHost.Content = ModDetailViewer;
         DataContext = this;
         ModListView.ItemsSource = Mods;
@@ -102,6 +103,7 @@ public partial class ModBrowserWindow : PopupContent, INotifyPropertyChanged
                 .SetTitleText("Failed to load mods")
                 .SetMessageType(MessageBoxWindow.MessageType.Warning)
                 .SetInfoText("Failed to retrieve mods. Make sure the request has at least 2 characters")
+                .SetModalOwner(this)
                 .Show();
             _isLoading = false;
             return false;
