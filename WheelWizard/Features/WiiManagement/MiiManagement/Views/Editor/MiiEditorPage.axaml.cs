@@ -21,6 +21,7 @@ using WheelWizard.Shared.Calendar;
 using WheelWizard.Views.Components;
 using WheelWizard.Views.Dialogs;
 using WheelWizard.Views.Shell;
+using WheelWizard.Views.Shell.Couch;
 using WheelWizard.Views.Shell.Navigation;
 using WheelWizard.WiiManagement.MiiManagement.Domain.Mii;
 using Button = Avalonia.Controls.Button;
@@ -37,7 +38,7 @@ public sealed record MiiEditorRequest(Mii? Mii);
 /// can be clicked to select it, and dragged to move it. The selected part cycles with the floating arrows (or the
 /// strip of all its variants at the bottom) and has its colour behind the button in the corner.
 /// </summary>
-public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSidebarPage
+public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSidebarPage, ICouchNavigationPage
 {
     /// <summary>Leave anyway if the save animation never reaches its "saved" marker.</summary>
     private static readonly TimeSpan SaveAnimationTimeout = TimeSpan.FromSeconds(4);
@@ -174,7 +175,10 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
     protected override void OnLoaded(RoutedEventArgs e)
     {
         base.OnLoaded(e);
-        Focus();
+        if (_couchLayout)
+            CouchFocusTarget?.Focus(NavigationMethod.Directional);
+        else
+            Focus();
     }
 
     #region Picker
@@ -313,6 +317,11 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
                 _group = null;
                 Refresh();
                 break;
+            case Level.HeadGroups when _couchLayout && _part is not null:
+                _part = null;
+                _group = null;
+                Refresh();
+                break;
             case Level.HeadGroups:
                 ZoomOut();
                 break;
@@ -336,8 +345,6 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
 
     private void RebuildSidebar()
     {
-        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() as Button;
-        var focusedLabel = _couchLayout && focused?.Parent == SidebarItems ? focused.Content as string : null;
         SidebarItems.Children.Clear();
         if (_session is null)
             return;
@@ -374,15 +381,6 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
                     AddSideButton(definition, definition.TitleKey, _part == definition.Part, () => SelectPart(definition.Part));
                 break;
         }
-        if (focusedLabel is not null)
-        {
-            var buttons = SidebarItems.Children.OfType<ToggleButton>();
-            var target =
-                buttons.FirstOrDefault(button => Equals(button.Content, focusedLabel))
-                ?? buttons.FirstOrDefault(button => button.IsChecked == true)
-                ?? buttons.FirstOrDefault();
-            target?.Focus(NavigationMethod.Directional);
-        }
     }
 
     private void AddSideButton(MiiPartDefinition definition, string titleKey, bool isChecked, Action click) =>
@@ -393,9 +391,12 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
     {
         if (_couchLayout)
         {
-            var native = new ToggleButton
+            var native = new ToggleRadioButton
             {
+                Classes = { "MiiTextVariant" },
                 Content = t(titleKey),
+                Tag = titleKey,
+                GroupName = "MiiEditorSidebar" + GetHashCode(),
                 IsChecked = isChecked,
                 MinHeight = 48,
                 Margin = new Thickness(3),
@@ -438,6 +439,7 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
     {
         if (_session is null)
             return;
+        var couchFocus = CaptureCouchFocus();
         var mii = _session.Mii;
         RebuildSidebar();
         UpdateTopActions(_session);
@@ -447,17 +449,24 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
         RebuildVariants(definition, mii);
         RebuildCouchPartActions(definition, mii);
 
-        var colors = _section == Section.Body ? MiiEditorParts.FavoriteColors : definition?.Colors;
+        var colors =
+            _section == Section.Body || (_couchLayout && _section == Section.Info) ? MiiEditorParts.FavoriteColors : definition?.Colors;
         SetColors(colors, mii);
 
         SetShown(BodyPanel, _section == Section.Body);
         SetShown(InfoCard, _section == Section.Info);
         PositionOverlay();
 
-        // The button that had focus may just have been rebuilt away; keep the keyboard shortcuts working.
+        // Rebuilt controls keep their semantic position, never the page or the 3D scene.
+        RestoreCouchFocus(couchFocus);
         Dispatcher.UIThread.Post(() =>
         {
-            if (TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is not Visual focused || !this.IsVisualAncestorOf(focused))
+            if (_couchLayout)
+                RecoverCouchFocus();
+            else if (
+                TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is not Visual focused
+                || !this.IsVisualAncestorOf(focused)
+            )
                 Focus();
         });
     }
@@ -504,6 +513,7 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
         {
             button.IsCircular = false;
             button.Text = t(tipKey);
+            button.Tag = tipKey;
         }
         button.IsEnabled = enabled;
         ToolTip.SetPlacement(button, PlacementMode.Left);
@@ -661,6 +671,18 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
         SwatchScroller.Opacity = 1;
         VariantPanel.Opacity = 0;
         VariantPanel.IsHitTestVisible = false;
+        if (_couchLayout)
+            Dispatcher.UIThread.Post(
+                () =>
+                {
+                    if (!_colorOpen || !_couchLayout)
+                        return;
+                    var selected = CouchFocusTarget;
+                    selected?.BringIntoView();
+                    selected?.Focus(NavigationMethod.Directional);
+                },
+                DispatcherPriority.Loaded
+            );
     }
 
     private void CloseColors(bool animate)
@@ -677,6 +699,8 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
         SwatchScroller.Opacity = 0;
         VariantPanel.ClearValue(OpacityProperty);
         VariantPanel.ClearValue(IsHitTestVisibleProperty);
+        if (_couchLayout)
+            ColorButton.Focus(NavigationMethod.Directional);
     }
 
     private void AnimateWidth(Control control, double from, double to)
@@ -1090,6 +1114,11 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
 
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = TryGoBack();
+            return;
+        }
         if (_level == Level.Picker || _session is null)
             return;
         // Typing a name: let the text box have its keys.
@@ -1098,12 +1127,9 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
             || (e.Source as Visual)?.FindAncestorOfType<Slider>(includeSelf: true) is not null
         )
             return;
-        // Focused couch controls use arrows for traversal; the scene/page owns direct part editing.
-        if (
-            _couchLayout
-            && e.Key is Key.Left or Key.Right or Key.Up or Key.Down
-            && (e.Source as Visual)?.FindAncestorOfType<Button>(includeSelf: true) is not null
-        )
+        // D-pad traversal never edits a part implicitly, even during focus recovery.
+        // Explicit action buttons edit parts; native sliders above retain their own arrow keys.
+        if (_couchLayout && e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
             return;
 
         var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
@@ -1124,21 +1150,6 @@ public partial class MiiEditorPage : UserControl, INavigationGuard, ILockedSideb
                 break;
             case Key.Right when _part is not null:
                 Cycle(1);
-                e.Handled = true;
-                break;
-            case Key.Up when _couchLayout && _part is { } upPart && MiiEditorParts.Get(upPart).DragVertical is { } up:
-                StepValue(up.Stepper, -1);
-                e.Handled = true;
-                break;
-            case Key.Down when _couchLayout && _part is { } downPart && MiiEditorParts.Get(downPart).DragVertical is { } down:
-                StepValue(down.Stepper, 1);
-                e.Handled = true;
-                break;
-            case Key.Escape:
-                if (_colorOpen)
-                    CloseColors(animate: true);
-                else
-                    StepOut();
                 e.Handled = true;
                 break;
         }
